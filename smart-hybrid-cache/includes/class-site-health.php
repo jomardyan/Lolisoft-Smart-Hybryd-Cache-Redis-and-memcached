@@ -47,7 +47,7 @@ class Smart_Hybrid_Cache_Site_Health {
 			'test'        => 'smart_hybrid_cache_object_cache',
 		);
 
-		if ( ! $dropin['available'] || ! $active ) {
+		if ( ! $dropin['active'] ) {
 			$result['status']      = 'recommended';
 			$result['label']       = __( 'A persistent object cache is not active', 'smart-hybrid-cache' );
 			$result['description'] = '<p>' . esc_html__( 'WordPress benefits significantly from a persistent object cache. Install the Smart Hybrid Cache drop-in or another supported object cache.', 'smart-hybrid-cache' ) . '</p>';
@@ -56,6 +56,8 @@ class Smart_Hybrid_Cache_Site_Health {
 				esc_url( admin_url( 'options-general.php?page=smart-hybrid-cache' ) ),
 				esc_html__( 'Open Smart Hybrid Cache settings', 'smart-hybrid-cache' )
 			);
+		} elseif ( ! $dropin['owned'] ) {
+			$result['label'] = __( 'Another drop-in provides the object cache', 'smart-hybrid-cache' );
 		} elseif ( ! empty( $status['last_error'] ) ) {
 			$result['status']      = 'recommended';
 			$result['label']       = __( 'Smart Hybrid Cache reported a connection error', 'smart-hybrid-cache' );
@@ -73,14 +75,38 @@ class Smart_Hybrid_Cache_Site_Health {
 			'label'       => __( 'Smart Hybrid Cache', 'smart-hybrid-cache' ),
 			'description' => __( 'Persistent object cache configuration and runtime status.', 'smart-hybrid-cache' ),
 			'fields'      => array(
-				'version'         => array( 'label' => __( 'Plugin version', 'smart-hybrid-cache' ), 'value' => SMART_HYBRID_CACHE_VERSION ),
-				'selected_engine' => array( 'label' => __( 'Selected engine', 'smart-hybrid-cache' ), 'value' => (string) $status['selected_engine'] ),
-				'active_engine'   => array( 'label' => __( 'Active engine', 'smart-hybrid-cache' ), 'value' => (string) $status['active_engine'] ),
-				'redis_ext'       => array( 'label' => __( 'Redis extension', 'smart-hybrid-cache' ), 'value' => $status['redis_available'] ? 'available' : 'missing' ),
-				'memcached_ext'   => array( 'label' => __( 'Memcached extension', 'smart-hybrid-cache' ), 'value' => $status['memcached_available'] ? 'available' : 'missing' ),
-				'dropin'          => array( 'label' => __( 'Drop-in', 'smart-hybrid-cache' ), 'value' => $status['dropin']['owner_label'] ),
-				'available'       => array( 'label' => __( 'Object cache available', 'smart-hybrid-cache' ), 'value' => ! empty( $status['object_cache_available'] ) ? 'yes' : 'no' ),
-				'last_error'      => array( 'label' => __( 'Last error', 'smart-hybrid-cache' ), 'value' => $status['last_error'] ?: 'none' ),
+				'version'         => array(
+					'label' => __( 'Plugin version', 'smart-hybrid-cache' ),
+					'value' => SMART_HYBRID_CACHE_VERSION,
+				),
+				'selected_engine' => array(
+					'label' => __( 'Selected engine', 'smart-hybrid-cache' ),
+					'value' => (string) $status['selected_engine'],
+				),
+				'active_engine'   => array(
+					'label' => __( 'Active engine', 'smart-hybrid-cache' ),
+					'value' => (string) $status['active_engine'],
+				),
+				'redis_ext'       => array(
+					'label' => __( 'Redis extension', 'smart-hybrid-cache' ),
+					'value' => $status['redis_available'] ? 'available' : 'missing',
+				),
+				'memcached_ext'   => array(
+					'label' => __( 'Memcached extension', 'smart-hybrid-cache' ),
+					'value' => $status['memcached_available'] ? 'available' : 'missing',
+				),
+				'dropin'          => array(
+					'label' => __( 'Drop-in', 'smart-hybrid-cache' ),
+					'value' => $status['dropin']['owner_label'],
+				),
+				'available'       => array(
+					'label' => __( 'Object cache available', 'smart-hybrid-cache' ),
+					'value' => ! empty( $status['object_cache_available'] ) ? 'yes' : 'no',
+				),
+				'last_error'      => array(
+					'label' => __( 'Last error', 'smart-hybrid-cache' ),
+					'value' => $status['last_error'] ?: 'none',
+				),
 			),
 		);
 		return $info;

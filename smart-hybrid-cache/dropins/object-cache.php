@@ -2,388 +2,472 @@
 /**
  * Smart Hybrid Cache Drop-In
  *
- * Persistent object cache drop-in for Redis and Memcached with runtime fallback.
+ * Standalone early-bootstrap object cache. Installed configuration is generated
+ * locally by the plugin. Never call the Options API while starting this cache.
  * Signature: Smart Hybrid Cache Drop-In
  *
  * @package SmartHybridCache
  */
 
-if ( ! defined( 'ABSPATH' ) ) {
-exit;
-}
+defined( 'ABSPATH' ) || exit;
 
-if ( ! defined( 'SMART_HYBRID_CACHE_DROPIN_VERSION' ) ) {
-define( 'SMART_HYBRID_CACHE_DROPIN_VERSION', '1.0.0' );
-}
+define( 'SMART_HYBRID_CACHE_DROPIN_VERSION', '1.2.0' );
 
-if ( ! class_exists( 'WP_Object_Cache', false ) ) {
 class WP_Object_Cache {
-private array $cache = array();
-private array $global_groups = array( 'blog-details', 'blog-id-cache', 'blog-lookup', 'global-posts', 'networks', 'rss', 'sites', 'site-details', 'site-lookup', 'site-options', 'site-transient', 'users', 'useremail', 'userlogins', 'usermeta', 'user_meta', 'userslugs' );
-private array $non_persistent_groups = array( 'counts', 'plugins', 'themes', 'comment', 'wc_session_id' );
-private array $options = array();
-private mixed $client = null;
-private string $engine = 'none';
-private int $blog_id = 1;
-public int $cache_hits = 0;
-public int $cache_misses = 0;
+	private array $cache                 = array();
+	private array $global_groups         = array();
+	private array $non_persistent_groups = array( 'counts', 'plugins', 'themes', 'theme_json' );
+	private array $options;
+	private mixed $client  = null;
+	private string $engine = 'none';
+	private string $namespace;
+	private ?string $generation = null;
+	private int $blog_id        = 1;
+	public int $cache_hits      = 0;
+	public int $cache_misses    = 0;
 
-public function __construct() {
-$this->blog_id = function_exists( 'get_current_blog_id' ) ? (int) get_current_blog_id() : 1;
-$this->options = $this->load_options();
-if ( function_exists( 'apply_filters' ) ) {
-$this->global_groups         = (array) apply_filters( 'smart_hybrid_cache_global_groups', $this->global_groups );
-$this->non_persistent_groups = (array) apply_filters( 'smart_hybrid_cache_non_persistent_groups', $this->non_persistent_groups );
-}
-$this->connect();
-}
+	public function __construct() {
+		// This marker is replaced only in the installed copy, never in the release.
+		$this->options   = /* SHC_CONFIGURATION */ array();
+		$this->options  += array(
+			'engine'                   => 'disabled',
+			'default_ttl'              => 3600,
+			'key_prefix'               => 'shc_',
+			'non_persistent_groups'    => '',
+			'additional_global_groups' => '',
+		);
+		$this->blog_id   = (int) ( $GLOBALS['blog_id'] ?? 1 );
+		$this->namespace = 'shc:v2:' . hash( 'sha256', ABSPATH . '|' . ( defined( 'WP_CACHE_KEY_SALT' ) ? WP_CACHE_KEY_SALT : '' ) . '|' . $this->options['key_prefix'] . '|' . ( $this->options['cache_generation'] ?? '' ) ) . ':';
+		$this->add_global_groups( $this->groups( $this->options['additional_global_groups'] ) );
+		$this->add_non_persistent_groups( $this->groups( $this->options['non_persistent_groups'] ) );
+		$this->connect();
+	}
 
-private function defaults(): array {
-$site_url = function_exists( 'network_site_url' ) ? network_site_url() : ( function_exists( 'home_url' ) ? home_url() : ABSPATH );
-return array(
-'engine'               => 'auto',
-'redis_host'           => '127.0.0.1',
-'redis_port'           => 6379,
-'redis_password'       => '',
-'redis_database'       => 0,
-'redis_timeout'        => 1.0,
-'redis_tls'            => false,
-'redis_persistent'     => true,
-'memcached_host'       => '127.0.0.1',
-'memcached_port'       => 11211,
-'memcached_persistent' => false,
-'default_ttl'          => 3600,
-'key_prefix'           => 'shc_' . substr( md5( (string) $site_url ), 0, 12 ) . '_',
-);
-}
+	private function groups( mixed $value ): array {
+		return is_array( $value ) ? $value : ( preg_split( '/[\s,]+/', (string) $value, -1, PREG_SPLIT_NO_EMPTY ) ?: array() );
+	}
 
-private function load_options(): array {
-$options = function_exists( 'get_option' ) ? get_option( 'smart_hybrid_cache_options', array() ) : array();
-return is_array( $options ) ? array_merge( $this->defaults(), $options ) : $this->defaults();
-}
-
-private function connect(): void {
-if ( 'disabled' === (string) $this->options['engine'] ) {
-return;
-}
-$engines = 'auto' === $this->options['engine'] ? array( 'redis', 'memcached' ) : array( $this->options['engine'] );
-foreach ( $engines as $engine ) {
-if ( 'redis' === $engine && $this->connect_redis() ) {
-$this->engine = 'redis';
-return;
-}
-if ( 'memcached' === $engine && $this->connect_memcached() ) {
-$this->engine = 'memcached';
-return;
-}
-}
-}
-
-private function connect_redis(): bool {
-if ( ! class_exists( 'Redis' ) ) {
-return false;
-}
-try {
-$redis  = new Redis();
-$host   = ( ! empty( $this->options['redis_tls'] ) ? 'tls://' : '' ) . (string) $this->options['redis_host'];
-$method = ! empty( $this->options['redis_persistent'] ) && method_exists( $redis, 'pconnect' ) ? 'pconnect' : 'connect';
-if ( ! $redis->{$method}( $host, (int) $this->options['redis_port'], (float) $this->options['redis_timeout'] ) ) {
-return false;
-}
-if ( '' !== (string) $this->options['redis_password'] && ! $redis->auth( (string) $this->options['redis_password'] ) ) {
-return false;
-}
-if ( (int) $this->options['redis_database'] > 0 && ! $redis->select( (int) $this->options['redis_database'] ) ) {
-return false;
-}
-$this->client = $redis;
-return true;
-} catch ( Throwable $e ) {
-$this->debug_log( 'Redis drop-in connection failed: ' . $e->getMessage() );
-return false;
-}
-}
-
-private function connect_memcached(): bool {
-if ( ! class_exists( 'Memcached' ) ) {
-return false;
-}
-try {
-$persistent_id = ! empty( $this->options['memcached_persistent'] ) ? 'smart_hybrid_cache' : '';
-$memcached     = '' !== $persistent_id ? new Memcached( $persistent_id ) : new Memcached();
-if ( empty( $memcached->getServerList() ) ) {
-$memcached->addServer( (string) $this->options['memcached_host'], (int) $this->options['memcached_port'] );
-}
-if ( empty( $memcached->getVersion() ) ) {
-return false;
-}
-$this->client = $memcached;
-return true;
-} catch ( Throwable $e ) {
-$this->debug_log( 'Memcached drop-in connection failed: ' . $e->getMessage() );
-return false;
-}
-}
-
-public function add( string $key, mixed $data, string $group = 'default', int $expire = 0 ): bool {
-if ( $this->get( $key, $group, false, $found ) || $found ) {
-return false;
-}
-return $this->set( $key, $data, $group, $expire, 'add' );
-}
-
-public function set( string $key, mixed $data, string $group = 'default', int $expire = 0, string $mode = 'set' ): bool {
-$group = $this->sanitize_group( $group );
-$key   = (string) $key;
-$this->ensure_group( $group );
-$this->cache[ $group ][ $key ] = $data;
-if ( $this->is_non_persistent_group( $group ) || 'none' === $this->engine ) {
-return true;
-}
-$ttl   = $expire > 0 ? $expire : (int) $this->options['default_ttl'];
-$p_key = $this->persistent_key( $key, $group );
-$value = $this->pack( $data );
-try {
-if ( 'redis' === $this->engine ) {
-if ( 'add' === $mode ) {
-$args = array( 'nx' );
-if ( $ttl > 0 ) {
-$args['ex'] = $ttl;
-}
-return (bool) $this->client->set( $p_key, $value, $args );
-}
-if ( 'replace' === $mode ) {
-$args = array( 'xx' );
-if ( $ttl > 0 ) {
-$args['ex'] = $ttl;
-}
-return (bool) $this->client->set( $p_key, $value, $args );
-}
-return $ttl > 0 ? (bool) $this->client->setex( $p_key, $ttl, $value ) : (bool) $this->client->set( $p_key, $value );
-}
-if ( 'memcached' === $this->engine ) {
-return (bool) $this->client->{$mode}( $p_key, $value, $ttl );
-}
-} catch ( Throwable $e ) {
-$this->debug_log( 'Set failed: ' . $e->getMessage() );
-}
-return true;
-}
-
-public function replace( string $key, mixed $data, string $group = 'default', int $expire = 0 ): bool {
-if ( ! $this->get( $key, $group, false, $found ) && ! $found ) {
-return false;
-}
-return $this->set( $key, $data, $group, $expire, 'replace' );
-}
-
-public function get( string $key, string $group = 'default', bool $force = false, ?bool &$found = null ): mixed {
-$group = $this->sanitize_group( $group );
-$key   = (string) $key;
-if ( ! $force && array_key_exists( $group, $this->cache ) && array_key_exists( $key, $this->cache[ $group ] ) ) {
-++$this->cache_hits;
-$found = true;
-return $this->cache[ $group ][ $key ];
-}
-if ( $this->is_non_persistent_group( $group ) || 'none' === $this->engine ) {
-++$this->cache_misses;
-$found = false;
-return false;
-}
-try {
-$value = $this->client->get( $this->persistent_key( $key, $group ) );
-$hit   = false !== $value;
-if ( 'memcached' === $this->engine && defined( 'Memcached::RES_NOTFOUND' ) && $this->client->getResultCode() === Memcached::RES_NOTFOUND ) {
-$hit = false;
-}
-if ( $hit ) {
-$data = $this->unpack( $value );
-$this->ensure_group( $group );
-$this->cache[ $group ][ $key ] = $data;
-++$this->cache_hits;
-$found = true;
-return $data;
-}
-} catch ( Throwable $e ) {
-$this->debug_log( 'Get failed: ' . $e->getMessage() );
-}
-++$this->cache_misses;
-$found = false;
-return false;
-}
-
-public function delete( string $key, string $group = 'default', bool $deprecated = false ): bool {
-$group = $this->sanitize_group( $group );
-$key   = (string) $key;
-if ( isset( $this->cache[ $group ] ) ) {
-				unset( $this->cache[ $group ][ $key ] );
-			}
-if ( $this->is_non_persistent_group( $group ) || 'none' === $this->engine ) {
-return true;
-}
-try {
-if ( 'redis' === $this->engine ) {
-return (bool) $this->client->del( $this->persistent_key( $key, $group ) );
-}
-if ( 'memcached' === $this->engine ) {
-return (bool) $this->client->delete( $this->persistent_key( $key, $group ) );
-}
-} catch ( Throwable $e ) {
-$this->debug_log( 'Delete failed: ' . $e->getMessage() );
-}
-return true;
-}
-
-public function flush(): bool {
-$this->cache = array();
-if ( 'redis' === $this->engine ) {
-return $this->flush_redis_prefix();
-}
-if ( 'memcached' === $this->engine ) {
-return (bool) $this->client->flush();
-}
-return true;
-}
-
-public function incr( string $key, int $offset = 1, string $group = 'default' ): int|false {
-$value = $this->get( $key, $group, false, $found );
-if ( ! $found ) {
-$value = 0;
-}
-$value = max( 0, (int) $value + $offset );
-return $this->set( $key, $value, $group ) ? $value : false;
-}
-
-public function decr( string $key, int $offset = 1, string $group = 'default' ): int|false {
-return $this->incr( $key, -abs( $offset ), $group );
-}
-
-public function get_multiple( array $keys, string $group = 'default', bool $force = false ): array {
-$values = array();
-foreach ( $keys as $key ) {
-$values[ $key ] = $this->get( (string) $key, $group, $force );
-}
-return $values;
-}
-
-public function set_multiple( array $data, string $group = 'default', int $expire = 0 ): bool {
-$result = true;
-foreach ( $data as $key => $value ) {
-$result = $this->set( (string) $key, $value, $group, $expire ) && $result;
-}
-return $result;
-}
-
-public function delete_multiple( array $keys, string $group = 'default' ): bool {
-$result = true;
-foreach ( $keys as $key ) {
-$result = $this->delete( (string) $key, $group ) && $result;
-}
-return $result;
-}
-
-public function switch_to_blog( int $blog_id ): void {
-			$this->blog_id = $blog_id;
-			$this->cache   = array();
+	private function connect(): void {
+		if ( defined( 'SMART_HYBRID_CACHE_DISABLED' ) && SMART_HYBRID_CACHE_DISABLED ) {
+			return;
 		}
+		$options = $this->options;
+		if ( ! empty( $options['plugin_file'] ) && ! is_file( $options['plugin_file'] ) ) {
+			return;
+		}
+		$engine = $options['engine'];
+		// Auto is resolved at installation. Never switch data stores on an outage.
+		try {
+			if ( 'redis' === $engine && class_exists( 'Redis' ) ) {
+				$client = new Redis();
+				$host   = ( ! empty( $options['redis_tls'] ) ? 'tls://' : '' ) . $options['redis_host'];
+				$method = ! empty( $options['redis_persistent'] ) ? 'pconnect' : 'connect';
+				$id     = 'shc_' . hash( 'sha256', $host . $options['redis_port'] . $options['redis_database'] . $options['redis_password'] );
+				if ( ! $client->{$method}( $host, (int) $options['redis_port'], (float) $options['redis_timeout'], $id, 0, (float) $options['redis_timeout'] ) ) {
+					return;
+				}
+				if ( '' !== $options['redis_password'] && ! $client->auth( $options['redis_password'] ) ) {
+					return;
+				}
+				// Persistent sockets may previously have selected another database.
+				if ( ! $client->select( (int) $options['redis_database'] ) ) {
+					return;
+				}
+				$client->setOption( Redis::OPT_SERIALIZER, Redis::SERIALIZER_NONE );
+				$client->setOption( Redis::OPT_PREFIX, '' );
+				$this->client = $client;
+				$this->engine = 'redis';
+			} elseif ( 'memcached' === $engine && class_exists( 'Memcached' ) ) {
+				$id     = 'shc_' . hash( 'sha256', $options['memcached_host'] . ':' . $options['memcached_port'] );
+				$client = ! empty( $options['memcached_persistent'] ) ? new Memcached( $id ) : new Memcached();
+				$client->setOption( Memcached::OPT_CONNECT_TIMEOUT, 1000 );
+				$client->setOption( Memcached::OPT_POLL_TIMEOUT, 1000 );
+				$client->setOption( Memcached::OPT_RECV_TIMEOUT, 1000000 );
+				$client->setOption( Memcached::OPT_SEND_TIMEOUT, 1000000 );
+				if ( empty( $client->getServerList() ) && ! $client->addServer( $options['memcached_host'], (int) $options['memcached_port'] ) ) {
+					return;
+				}
+				$versions = $client->getVersion();
+				if ( ! $versions || in_array( '255.255.255', $versions, true ) || in_array( false, $versions, true ) ) {
+					return;
+				}
+				$this->client = $client;
+				$this->engine = 'memcached';
+			}
+		} catch ( Throwable $e ) {
+			$this->disconnect();
+		}
+	}
 
-public function add_global_groups( array|string $groups ): void {
-foreach ( (array) $groups as $group ) {
-$this->global_groups[] = (string) $group;
-}
-$this->global_groups = array_values( array_unique( $this->global_groups ) );
-}
+	private function disconnect(): void {
+		$this->client = null;
+		$this->engine = 'none';
+	}
 
-public function add_non_persistent_groups( array|string $groups ): void {
-foreach ( (array) $groups as $group ) {
-$this->non_persistent_groups[] = (string) $group;
-}
-$this->non_persistent_groups = array_values( array_unique( $this->non_persistent_groups ) );
-}
+	public function shc_engine(): string {
+		return $this->engine;
+	}
 
-public function stats(): void {
-echo esc_html( 'Smart Hybrid Cache hits: ' . $this->cache_hits . ', misses: ' . $this->cache_misses . ', engine: ' . $this->engine );
-}
+	private function valid_key( mixed $key ): bool {
+		return is_int( $key ) || ( is_string( $key ) && '' !== trim( $key ) );
+	}
 
-private function ensure_group( string $group ): void {
-			if ( ! isset( $this->cache[ $group ] ) || ! is_array( $this->cache[ $group ] ) ) {
-				$this->cache[ $group ] = array();
+	private function group( mixed $group ): string {
+		return empty( $group ) ? 'default' : (string) $group;
+	}
+
+	private function scope( string $group ): string {
+		return ( in_array( $group, $this->global_groups, true ) ? 'global' : 'blog_' . $this->blog_id ) . ':' . $group;
+	}
+
+	private function persistent( string $group ): bool {
+		return 'none' !== $this->engine && ! in_array( $group, $this->non_persistent_groups, true );
+	}
+
+	private function copy_value( mixed $value ): mixed {
+		return is_object( $value ) ? clone $value : $value;
+	}
+
+	private function decode( mixed $value ): array|false {
+		// Cached WordPress objects must retain their classes. Only trusted cache
+		// servers may be configured. Invalid payloads are cache misses.
+		$value = is_string( $value ) ? @unserialize( $value, array( 'allowed_classes' => true ) ) : false;
+		return is_array( $value ) && array_key_exists( 'value', $value ) && isset( $value['expires'] ) && is_int( $value['expires'] ) ? $value : false;
+	}
+
+	private function live( mixed $entry ): bool {
+		return is_array( $entry ) && ( 0 === $entry['expires'] || $entry['expires'] > time() );
+	}
+
+	private function backend_get( string $key ): mixed {
+		$value = $this->client->get( $key );
+		if ( 'memcached' === $this->engine && method_exists( $this->client, 'getResultCode' ) && ! in_array( $this->client->getResultCode(), array( Memcached::RES_SUCCESS, Memcached::RES_NOTFOUND ), true ) ) {
+			throw new RuntimeException( 'Memcached read failed.' );
+		}
+		return $value;
+	}
+
+	private function generation(): string {
+		if ( null !== $this->generation ) {
+			return $this->generation;
+		}
+		$key   = $this->namespace . 'generation';
+		$value = $this->backend_get( $key );
+		if ( ! is_string( $value ) || ! preg_match( '/^[a-f0-9]{32}$/D', $value ) ) {
+			$value = bin2hex( random_bytes( 16 ) );
+			$added = 'redis' === $this->engine ? $this->client->set( $key, $value, array( 'nx' ) ) : $this->client->add( $key, $value );
+			if ( ! $added ) {
+				$value = $this->backend_get( $key );
+			}
+			if ( ! is_string( $value ) || ! preg_match( '/^[a-f0-9]{32}$/D', $value ) ) {
+				throw new RuntimeException( 'Cache namespace is unavailable.' );
 			}
 		}
+		$this->generation = $value;
+		return $value;
+	}
 
-		private function persistent_key( string $key, string $group ): string {
-$prefix = preg_replace( '/[^A-Za-z0-9_:-]/', '_', (string) $this->options['key_prefix'] );
-$scope  = in_array( $group, $this->global_groups, true ) ? 'global' : 'blog_' . $this->blog_id;
-if ( function_exists( 'is_multisite' ) && is_multisite() && defined( 'COOKIEHASH' ) ) {
-$scope = COOKIEHASH . ':' . $scope;
-}
-return substr( $prefix . $scope . ':' . $group . ':' . md5( $key ), 0, 250 );
+	private function persistent_key( mixed $key, string $group ): string {
+		return $this->namespace . $this->generation() . ':' . hash( 'sha256', serialize( array( $this->scope( $group ), (string) $key ) ) );
+	}
+
+	private function expiration( array $entry ): int {
+		$ttl = 0 === $entry['expires'] ? 0 : max( 1, $entry['expires'] - time() );
+		return 'memcached' === $this->engine && $ttl > 2592000 ? $entry['expires'] : $ttl;
+	}
+
+	public function get( $key, $group = 'default', $force = false, &$found = null ) {
+		$found = false;
+		if ( ! $this->valid_key( $key ) ) {
+			return false;
+		}
+		$group = $this->group( $group );
+		$scope = $this->scope( $group );
+		$entry = $this->cache[ $scope ][ $key ] ?? false;
+		if ( ( ! $force || ! $this->persistent( $group ) ) && $this->live( $entry ) ) {
+			$found = true;
+		} elseif ( $this->persistent( $group ) ) {
+			try {
+				$entry = $this->decode( $this->backend_get( $this->persistent_key( $key, $group ) ) );
+				$found = $this->live( $entry );
+			} catch ( Throwable $e ) {
+				$this->disconnect();
+				$found = $this->live( $entry );
+			}
+		}
+		if ( $found ) {
+			$this->cache[ $scope ][ $key ] = $entry;
+			++$this->cache_hits;
+			return $this->copy_value( $entry['value'] );
+		}
+		unset( $this->cache[ $scope ][ $key ] );
+		++$this->cache_misses;
+		return false;
+	}
+
+	public function set( $key, $data, $group = 'default', $expire = 0, $mode = 'set' ): bool {
+		if ( ! $this->valid_key( $key ) || ! in_array( $mode, array( 'set', 'add', 'replace' ), true ) ) {
+			return false;
+		}
+		if ( 'add' === $mode && function_exists( 'wp_suspend_cache_addition' ) && wp_suspend_cache_addition() ) {
+			return false;
+		}
+		$group = $this->group( $group );
+		$scope = $this->scope( $group );
+		$ttl   = (int) $expire > 0 ? (int) $expire : max( 0, (int) $this->options['default_ttl'] );
+		$entry = array(
+			'value'   => $this->copy_value( $data ),
+			'expires' => $ttl ? time() + $ttl : 0,
+		);
+		if ( ! $this->persistent( $group ) ) {
+			$exists = $this->live( $this->cache[ $scope ][ $key ] ?? false );
+			if ( ( 'add' === $mode && $exists ) || ( 'replace' === $mode && ! $exists ) ) {
+				return false;
+			}
+		} else {
+			try {
+				$pkey  = $this->persistent_key( $key, $group );
+				$value = serialize( $entry );
+				if ( 'redis' === $this->engine ) {
+					$args = $ttl ? array( 'ex' => $ttl ) : array();
+					if ( 'set' !== $mode ) {
+						$args[] = 'add' === $mode ? 'nx' : 'xx';
+					}
+					$result = $this->client->set( $pkey, $value, $args );
+				} else {
+					$result = $this->client->{$mode}( $pkey, $value, $this->expiration( $entry ) );
+				}
+				if ( ! $result ) {
+					unset( $this->cache[ $scope ][ $key ] );
+					return false;
+				}
+			} catch ( Throwable $e ) {
+				$this->disconnect();
+				return $this->set( $key, $data, $group, $expire, $mode );
+			}
+		}
+		$this->cache[ $scope ][ $key ] = $entry;
+		return true;
+	}
+
+	public function add( $key, $data, $group = 'default', $expire = 0 ): bool {
+		return $this->set( $key, $data, $group, $expire, 'add' );
+	}
+
+	public function replace( $key, $data, $group = 'default', $expire = 0 ): bool {
+		return $this->set( $key, $data, $group, $expire, 'replace' );
+	}
+
+	public function delete( $key, $group = 'default', $deprecated = false ): bool {
+		if ( ! $this->valid_key( $key ) ) {
+			return false;
+		}
+		$group  = $this->group( $group );
+		$scope  = $this->scope( $group );
+		$exists = $this->live( $this->cache[ $scope ][ $key ] ?? false );
+		unset( $this->cache[ $scope ][ $key ] );
+		if ( $this->persistent( $group ) ) {
+			try {
+				$pkey = $this->persistent_key( $key, $group );
+				return 'redis' === $this->engine ? (bool) $this->client->del( $pkey ) : $this->client->delete( $pkey );
+			} catch ( Throwable $e ) {
+				$this->disconnect();
+			}
+		}
+		return $exists;
+	}
+
+	public function flush(): bool {
+		$this->cache = array();
+		if ( 'none' === $this->engine ) {
+			return true;
+		}
+		try {
+			$value = bin2hex( random_bytes( 16 ) );
+			if ( ! $this->client->set( $this->namespace . 'generation', $value ) ) {
+				return false;
+			}
+			$this->generation = $value;
+			return true;
+		} catch ( Throwable $e ) {
+			$this->disconnect();
+			return false;
+		}
+	}
+
+	public function flush_runtime(): bool {
+		$this->cache      = array();
+		$this->generation = null;
+		return true;
+	}
+
+	public function incr( $key, $offset = 1, $group = 'default' ) {
+		return $this->change_counter( $key, (int) $offset, $group );
+	}
+
+	public function decr( $key, $offset = 1, $group = 'default' ) {
+		return $this->change_counter( $key, - (int) $offset, $group );
+	}
+
+	private function change_counter( $key, int $offset, $group ) {
+		if ( ! $this->valid_key( $key ) ) {
+			return false;
+		}
+		$group = $this->group( $group );
+		$scope = $this->scope( $group );
+		if ( ! $this->persistent( $group ) ) {
+			$entry = $this->cache[ $scope ][ $key ] ?? false;
+			if ( ! $this->live( $entry ) ) {
+				return false;
+			}
+			$entry['value']                = max( 0, ( is_numeric( $entry['value'] ) ? (int) $entry['value'] : 0 ) + $offset );
+			$this->cache[ $scope ][ $key ] = $entry;
+			return $entry['value'];
+		}
+		try {
+			$pkey = $this->persistent_key( $key, $group );
+			for ( $attempt = 0; $attempt < 10; ++$attempt ) {
+				if ( 'redis' === $this->engine ) {
+					$this->client->watch( $pkey );
+					$entry = $this->decode( $this->client->get( $pkey ) );
+				} else {
+					$result = $this->client->get( $pkey, null, Memcached::GET_EXTENDED );
+					$entry  = $this->decode( is_array( $result ) ? $result['value'] : false );
+				}
+				if ( ! $this->live( $entry ) ) {
+					if ( 'redis' === $this->engine ) {
+						$this->client->unwatch();
+					}
+					unset( $this->cache[ $scope ][ $key ] );
+					return false;
+				}
+				$entry['value'] = max( 0, ( is_numeric( $entry['value'] ) ? (int) $entry['value'] : 0 ) + $offset );
+				$ttl            = $this->expiration( $entry );
+				if ( 'redis' === $this->engine ) {
+					$this->client->multi();
+					$this->client->set( $pkey, serialize( $entry ), $ttl ? array( 'ex' => $ttl ) : array() );
+					$result = $this->client->exec();
+					$ok     = is_array( $result ) && ! empty( $result[0] );
+				} else {
+					$ok = $this->client->cas( $result['cas'], $pkey, serialize( $entry ), $ttl );
+				}
+				if ( $ok ) {
+					$this->cache[ $scope ][ $key ] = $entry;
+					return $entry['value'];
+				}
+			}
+		} catch ( Throwable $e ) {
+			// A failed transaction must never leave a persistent socket in MULTI.
+			if ( 'redis' === $this->engine ) {
+				try {
+					$this->client->discard();
+					$this->client->unwatch(); } catch ( Throwable $ignored ) {
+					/* Connection already closed. */ }
+			}
+			$this->disconnect();
+		}
+		unset( $this->cache[ $scope ][ $key ] );
+		return false;
+	}
+
+	public function get_multiple( $keys, $group = 'default', $force = false ): array {
+		$result = array();
+		foreach ( (array) $keys as $key ) {
+			if ( $this->valid_key( $key ) ) {
+				$result[ $key ] = $this->get( $key, $group, $force );
+			}
+		}
+		return $result;
+	}
+
+	public function add_multiple( array $data, $group = 'default', $expire = 0 ): array {
+		return $this->write_multiple( $data, $group, $expire, 'add' );
+	}
+
+	public function set_multiple( array $data, $group = 'default', $expire = 0 ): array {
+		return $this->write_multiple( $data, $group, $expire, 'set' );
+	}
+
+	private function write_multiple( array $data, $group, $expire, string $mode ): array {
+		$result = array();
+		foreach ( $data as $key => $value ) {
+			$result[ $key ] = $this->set( $key, $value, $group, $expire, $mode );
+		}
+		return $result;
+	}
+
+	public function delete_multiple( array $keys, $group = 'default' ): array {
+		$result = array();
+		foreach ( $keys as $key ) {
+			if ( $this->valid_key( $key ) ) {
+				$result[ $key ] = $this->delete( $key, $group );
+			}
+		}
+		return $result;
+	}
+
+	public function switch_to_blog( $blog_id ): void {
+		$this->blog_id = (int) $blog_id;
+	}
+
+	public function add_global_groups( $groups ): void {
+		$this->global_groups = array_values( array_unique( array_merge( $this->global_groups, (array) $groups ) ) );
+	}
+
+	public function add_non_persistent_groups( $groups ): void {
+		$this->non_persistent_groups = array_values( array_unique( array_merge( $this->non_persistent_groups, (array) $groups ) ) );
+	}
+
+	public function stats(): void {
+		echo esc_html( 'Smart Hybrid Cache hits ' . $this->cache_hits . ', misses ' . $this->cache_misses . ', engine ' . $this->engine );
+	}
 }
 
-private function sanitize_group( string $group ): string {
-return '' === $group ? 'default' : $group;
+// phpcs:disable WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedFunctionFound -- WordPress requires these exact Object Cache API function names in a drop-in.
+function wp_cache_init() {
+	$GLOBALS['wp_object_cache'] = new WP_Object_Cache();
+	if ( function_exists( 'wp_using_ext_object_cache' ) ) {
+		// This flag identifies the loaded implementation, not backend health.
+		// Clearing it makes multisite's second bootstrap include core cache.php
+		// and redeclare this drop-in's functions. Health uses shc_engine instead.
+		wp_using_ext_object_cache( true );
+	}
 }
-
-private function is_non_persistent_group( string $group ): bool {
-return in_array( $group, $this->non_persistent_groups, true );
-}
-
-private function pack( mixed $value ): string {
-return serialize( array( 'value' => $value ) );
-}
-
-private function unpack( mixed $value ): mixed {
-$data = is_string( $value ) ? @unserialize( $value, array( 'allowed_classes' => true ) ) : false;
-return is_array( $data ) && array_key_exists( 'value', $data ) ? $data['value'] : false;
-}
-
-private function flush_redis_prefix(): bool {
-try {
-$iterator = null;
-$prefix   = preg_replace( '/[^A-Za-z0-9_:-]/', '_', (string) $this->options['key_prefix'] );
-do {
-$keys = $this->client->scan( $iterator, $prefix . '*', 250 );
-if ( false !== $keys && ! empty( $keys ) ) {
-$this->client->del( $keys );
-}
-} while ( $iterator > 0 );
-return true;
-} catch ( Throwable $e ) {
-$this->debug_log( 'Redis prefix flush failed: ' . $e->getMessage() );
-return false;
-}
-}
-
-private function debug_log( string $message ): void {
-if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
-error_log( 'Smart Hybrid Cache: ' . $message ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-}
-}
-}
-}
-
-$GLOBALS['wp_object_cache'] = new WP_Object_Cache();
-
-function wp_cache_init(): void {
-$GLOBALS['wp_object_cache'] = new WP_Object_Cache();
-}
-
-function wp_cache_add( $key, $data, $group = '', $expire = 0 ) { return $GLOBALS['wp_object_cache']->add( (string) $key, $data, (string) $group, (int) $expire ); }
-function wp_cache_set( $key, $data, $group = '', $expire = 0 ) { return $GLOBALS['wp_object_cache']->set( (string) $key, $data, (string) $group, (int) $expire ); }
-function wp_cache_replace( $key, $data, $group = '', $expire = 0 ) { return $GLOBALS['wp_object_cache']->replace( (string) $key, $data, (string) $group, (int) $expire ); }
-function wp_cache_get( $key, $group = '', $force = false, &$found = null ) { return $GLOBALS['wp_object_cache']->get( (string) $key, (string) $group, (bool) $force, $found ); }
-function wp_cache_delete( $key, $group = '', $deprecated = false ) { return $GLOBALS['wp_object_cache']->delete( (string) $key, (string) $group, (bool) $deprecated ); }
-function wp_cache_flush() { return $GLOBALS['wp_object_cache']->flush(); }
-function wp_cache_incr( $key, $offset = 1, $group = '' ) { return $GLOBALS['wp_object_cache']->incr( (string) $key, (int) $offset, (string) $group ); }
-function wp_cache_decr( $key, $offset = 1, $group = '' ) { return $GLOBALS['wp_object_cache']->decr( (string) $key, (int) $offset, (string) $group ); }
-function wp_cache_get_multiple( $keys, $group = '', $force = false ) { return $GLOBALS['wp_object_cache']->get_multiple( (array) $keys, (string) $group, (bool) $force ); }
-function wp_cache_add_multiple( array $data, $group = '', $expire = 0 ) { $result = true; foreach ( $data as $key => $value ) { $result = wp_cache_add( (string) $key, $value, (string) $group, (int) $expire ) && $result; } return $result; }
-function wp_cache_set_multiple( array $data, $group = '', $expire = 0 ) { return $GLOBALS['wp_object_cache']->set_multiple( $data, (string) $group, (int) $expire ); }
-function wp_cache_delete_multiple( array $keys, $group = '' ) { return $GLOBALS['wp_object_cache']->delete_multiple( $keys, (string) $group ); }
-function wp_cache_add_global_groups( $groups ) { $GLOBALS['wp_object_cache']->add_global_groups( $groups ); }
-function wp_cache_add_non_persistent_groups( $groups ) { $GLOBALS['wp_object_cache']->add_non_persistent_groups( $groups ); }
-function wp_cache_switch_to_blog( $blog_id ) { $GLOBALS['wp_object_cache']->switch_to_blog( (int) $blog_id ); }
-function wp_cache_close() { return true; }
-function wp_cache_stats() { $GLOBALS['wp_object_cache']->stats(); }
-function wp_cache_flush_runtime() { $GLOBALS['wp_object_cache'] = new WP_Object_Cache(); return true; }
-function wp_cache_supports( $feature ) { return in_array( $feature, array( 'add_multiple', 'set_multiple', 'get_multiple', 'delete_multiple', 'flush_runtime' ), true ); }
+function wp_cache_add( $key, $data, $group = '', $expire = 0 ) {
+	return $GLOBALS['wp_object_cache']->add( $key, $data, $group, $expire ); }
+function wp_cache_set( $key, $data, $group = '', $expire = 0 ) {
+	return $GLOBALS['wp_object_cache']->set( $key, $data, $group, $expire ); }
+function wp_cache_replace( $key, $data, $group = '', $expire = 0 ) {
+	return $GLOBALS['wp_object_cache']->replace( $key, $data, $group, $expire ); }
+function wp_cache_get( $key, $group = '', $force = false, &$found = null ) {
+	return $GLOBALS['wp_object_cache']->get( $key, $group, $force, $found ); }
+function wp_cache_delete( $key, $group = '', $deprecated = false ) {
+	return $GLOBALS['wp_object_cache']->delete( $key, $group, $deprecated ); }
+function wp_cache_flush() {
+	return $GLOBALS['wp_object_cache']->flush(); }
+function wp_cache_incr( $key, $offset = 1, $group = '' ) {
+	return $GLOBALS['wp_object_cache']->incr( $key, $offset, $group ); }
+function wp_cache_decr( $key, $offset = 1, $group = '' ) {
+	return $GLOBALS['wp_object_cache']->decr( $key, $offset, $group ); }
+function wp_cache_get_multiple( $keys, $group = '', $force = false ) {
+	return $GLOBALS['wp_object_cache']->get_multiple( $keys, $group, $force ); }
+function wp_cache_add_multiple( array $data, $group = '', $expire = 0 ) {
+	return $GLOBALS['wp_object_cache']->add_multiple( $data, $group, $expire ); }
+function wp_cache_set_multiple( array $data, $group = '', $expire = 0 ) {
+	return $GLOBALS['wp_object_cache']->set_multiple( $data, $group, $expire ); }
+function wp_cache_delete_multiple( array $keys, $group = '' ) {
+	return $GLOBALS['wp_object_cache']->delete_multiple( $keys, $group ); }
+function wp_cache_add_global_groups( $groups ) {
+	$GLOBALS['wp_object_cache']->add_global_groups( $groups ); }
+function wp_cache_add_non_persistent_groups( $groups ) {
+	$GLOBALS['wp_object_cache']->add_non_persistent_groups( $groups ); }
+function wp_cache_switch_to_blog( $blog_id ) {
+	$GLOBALS['wp_object_cache']->switch_to_blog( $blog_id ); }
+function wp_cache_close() {
+	return true; }
+function wp_cache_stats() {
+	$GLOBALS['wp_object_cache']->stats(); }
+function wp_cache_flush_runtime() {
+	return $GLOBALS['wp_object_cache']->flush_runtime(); }
+function wp_cache_supports( $feature ) {
+	return in_array( $feature, array( 'add_multiple', 'set_multiple', 'get_multiple', 'delete_multiple', 'flush_runtime' ), true ); }

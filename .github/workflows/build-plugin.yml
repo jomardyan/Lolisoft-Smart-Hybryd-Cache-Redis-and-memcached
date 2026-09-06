@@ -34,14 +34,18 @@ jobs:
       - name: Resolve package version
         id: package-version
         shell: bash
+        env:
+          RELEASE_VERSION: ${{ github.event.release.tag_name || inputs.version || '' }}
         run: |
-          version="${{ github.event.release.tag_name || inputs.version || '' }}"
+          version="$RELEASE_VERSION"
           version="${version#v}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - name: Bump plugin metadata for release package
         if: steps.package-version.outputs.version != ''
-        run: php tools/bump-plugin-version.php "${{ steps.package-version.outputs.version }}"
+        env:
+          PACKAGE_VERSION: ${{ steps.package-version.outputs.version }}
+        run: php tools/bump-plugin-version.php "$PACKAGE_VERSION"
 
       - name: Build standalone plugin ZIP
         run: make build
@@ -66,8 +70,10 @@ jobs:
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          PACKAGE_VERSION: ${{ steps.package-version.outputs.version }}
         run: |
-          gh release upload "${{ github.event.release.tag_name }}" \
+          gh release upload "$RELEASE_TAG" \
             build/smart-hybrid-cache.zip \
-            "build/smart-hybrid-cache-${{ steps.package-version.outputs.version }}.zip" \
+            "build/smart-hybrid-cache-${PACKAGE_VERSION}.zip" \
             --clobber

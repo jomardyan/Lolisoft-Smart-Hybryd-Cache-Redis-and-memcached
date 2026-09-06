@@ -7,9 +7,9 @@ BUMP_SCRIPT := tools/bump-plugin-version.php
 ZIP := $(BUILD_DIR)/$(PLUGIN_SLUG).zip
 VERSION ?= $(shell sed -nE "s/^ \* Version:[[:space:]]*([^[:space:]]+).*$$/\1/p" $(PLUGIN_FILE) | head -n1)
 VERSIONED_ZIP := $(BUILD_DIR)/$(PLUGIN_SLUG)-$(VERSION).zip
-PHP_FILES := $(shell find $(PLUGIN_DIR) -name '*.php' -type f | sort)
+PHP_FILES := $(shell find $(PLUGIN_DIR) tests tools -name '*.php' -type f | sort)
 
-.PHONY: all check-deps lint build build-versioned release clean tree version set-version help ci
+.PHONY: test validate all check-deps lint build build-versioned release clean tree version set-version help ci
 
 all: build
 
@@ -52,16 +52,24 @@ set-version:
 	@php $(BUMP_SCRIPT) "$(VERSION)"
 	@echo "Version updated to $(VERSION)"
 
-build: check-deps lint
+test:
+	@php tests/run.php
+	@SHC_TEST_ENGINE=redis php tests/run.php
+	@SHC_TEST_ENGINE=memcached php tests/run.php
+
+validate:
+	@php tools/validate-package.php
+
+build: check-deps lint validate
 	@mkdir -p $(BUILD_DIR)
 	@echo "Building $(ZIP) (v$(VERSION))"
+	@rm -f $(ZIP)
 	@zip -qr $(ZIP) $(PLUGIN_DIR) -x '*/.DS_Store'
+	@php tools/validate-package.php $(ZIP)
 	@echo "Built $(ZIP)"
 
-build-versioned: check-deps lint
-	@mkdir -p $(BUILD_DIR)
-	@echo "Building $(VERSIONED_ZIP)"
-	@zip -qr $(VERSIONED_ZIP) $(PLUGIN_DIR) -x '*/.DS_Store'
+build-versioned: build
+	@cp $(ZIP) $(VERSIONED_ZIP)
 	@echo "Built $(VERSIONED_ZIP)"
 
 release: build build-versioned
@@ -70,7 +78,7 @@ release: build build-versioned
 	@echo "  • $(ZIP)"
 	@echo "  • $(VERSIONED_ZIP)"
 
-ci: lint build
+ci: lint test build
 	@echo "CI build complete."
 
 clean:
