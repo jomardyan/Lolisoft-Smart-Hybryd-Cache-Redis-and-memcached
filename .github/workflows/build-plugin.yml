@@ -20,10 +20,23 @@ jobs:
   build:
     name: Build WordPress plugin artifact
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+      memcached:
+        image: memcached:1.6-alpine
+        ports: ['11211:11211']
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: redis, memcached, zip
+          coverage: none
 
       - name: Verify PHP and install ZIP utility
         run: |
