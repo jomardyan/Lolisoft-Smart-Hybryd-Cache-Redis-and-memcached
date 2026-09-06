@@ -52,7 +52,7 @@ class Smart_Hybrid_Cache_Settings {
 	}
 
 	public static function get_options(): array {
-		$options = is_multisite() && get_current_blog_id() !== get_main_site_id() ? get_blog_option( get_main_site_id(), SMART_HYBRID_CACHE_OPTION, array() ) : get_option( SMART_HYBRID_CACHE_OPTION, array() );
+		$options = self::get_shared_option( SMART_HYBRID_CACHE_OPTION, array() );
 		if ( ! is_array( $options ) ) {
 			$options = array();
 		}
@@ -60,9 +60,9 @@ class Smart_Hybrid_Cache_Settings {
 		$options = wp_parse_args( $options, self::defaults() );
 		// Clear intent survives repeated sanitization but never a future edit.
 		unset( $options['clear_redis_password'] );
-		$events                = get_option( 'smart_hybrid_cache_events', $options['log_events'] );
+		$events                = self::get_shared_option( 'smart_hybrid_cache_events', $options['log_events'] );
 		$options['log_events'] = is_array( $events ) ? $events : array();
-		$state                 = get_option( 'smart_hybrid_cache_status', array() );
+		$state                 = self::get_shared_option( 'smart_hybrid_cache_status', array() );
 		if ( is_array( $state ) ) {
 			$options['last_error']            = (string) ( $state['last_error'] ?? $options['last_error'] );
 			$options['last_connected_engine'] = (string) ( $state['last_connected_engine'] ?? $options['last_connected_engine'] );
@@ -74,22 +74,54 @@ class Smart_Hybrid_Cache_Settings {
 		return $options;
 	}
 
+	/** All network sites use the main site's configuration and diagnostic state. */
+	public static function get_shared_option( string $name, mixed $default = false ): mixed {
+		return is_multisite() && get_current_blog_id() !== get_main_site_id()
+			? get_blog_option( get_main_site_id(), $name, $default )
+			: get_option( $name, $default );
+	}
+
+	public static function update_shared_option( string $name, mixed $value ): bool {
+		$switched = is_multisite() && get_current_blog_id() !== get_main_site_id();
+		if ( $switched ) {
+			switch_to_blog( get_main_site_id() );
+		}
+		try {
+			return update_option( $name, $value, false );
+		} finally {
+			if ( $switched ) {
+				restore_current_blog();
+			}
+		}
+	}
+
+	public static function delete_shared_option( string $name ): bool {
+		return is_multisite() && get_current_blog_id() !== get_main_site_id()
+			? delete_blog_option( get_main_site_id(), $name )
+			: delete_option( $name );
+	}
+
 	public static function ensure_defaults(): void {
-		if ( false === get_option( SMART_HYBRID_CACHE_OPTION, false ) ) {
-			add_option( SMART_HYBRID_CACHE_OPTION, self::defaults(), '', false );
+		if ( false === self::get_shared_option( SMART_HYBRID_CACHE_OPTION, false ) ) {
+			self::update_shared_option( SMART_HYBRID_CACHE_OPTION, self::defaults() );
 		}
 	}
 
 	public static function update_options( array $options ): bool {
 		$options = wp_parse_args( $options, self::get_options() );
-		return update_option( SMART_HYBRID_CACHE_OPTION, self::sanitize( $options ), false );
+		return self::update_shared_option( SMART_HYBRID_CACHE_OPTION, self::sanitize( $options ) );
 	}
 
 	public static function sanitize( mixed $input ): array {
-		$input = is_array( $input ) ? $input : array();
+		if ( ! is_array( $input ) ) {
+			return self::get_options();
+		}
 		foreach ( $input as $key => $value ) {
-			if ( ! is_scalar( $value ) && ! is_null( $value ) ) {
-				unset( $input[ $key ] ); }
+			if ( is_array( $value ) && in_array( $key, array( 'non_persistent_groups', 'additional_global_groups' ), true ) ) {
+				$input[ $key ] = array_filter( $value, 'is_scalar' );
+			} elseif ( ! is_scalar( $value ) && ! is_null( $value ) ) {
+				unset( $input[ $key ] );
+			}
 		}
 		$current = self::get_options();
 		$output  = array();
@@ -108,14 +140,14 @@ class Smart_Hybrid_Cache_Settings {
 			// Preserve clear intent if the Settings API sanitizes the value a second time.
 			$output['clear_redis_password'] = true;
 		}
-		$output['redis_database']            = max( 0, min( 255, absint( $input['redis_database'] ?? $current['redis_database'] ) ) );
+		$output['redis_database']            = max( 0, min( 255, (int) ( $input['redis_database'] ?? $current['redis_database'] ) ) );
 		$output['redis_timeout']             = max( 0.1, min( 10, (float) ( $input['redis_timeout'] ?? $current['redis_timeout'] ) ) );
 		$output['redis_tls']                 = self::sanitize_bool( $input['redis_tls'] ?? false );
 		$output['redis_persistent']          = self::sanitize_bool( $input['redis_persistent'] ?? false );
 		$output['memcached_host']            = self::sanitize_host( (string) ( $input['memcached_host'] ?? $current['memcached_host'] ), $current['memcached_host'] );
 		$output['memcached_port']            = self::sanitize_port( $input['memcached_port'] ?? $current['memcached_port'], 11211 );
 		$output['memcached_persistent']      = self::sanitize_bool( $input['memcached_persistent'] ?? false );
-		$output['default_ttl']               = max( 0, min( YEAR_IN_SECONDS, absint( $input['default_ttl'] ?? $current['default_ttl'] ) ) );
+		$output['default_ttl']               = max( 0, min( YEAR_IN_SECONDS, (int) ( $input['default_ttl'] ?? $current['default_ttl'] ) ) );
 		$output['key_prefix']                = self::sanitize_prefix( (string) ( $input['key_prefix'] ?? $current['key_prefix'] ) );
 		$output['enable_dropin']             = self::sanitize_bool( $input['enable_dropin'] ?? false );
 		$output['flush_on_post_update']      = self::sanitize_bool( $input['flush_on_post_update'] ?? false );
@@ -150,7 +182,7 @@ class Smart_Hybrid_Cache_Settings {
 	}
 
 	private static function sanitize_port( mixed $value, int $default ): int {
-		$port = absint( $value );
+		$port = (int) $value;
 		return ( $port >= 1 && $port <= 65535 ) ? $port : $default;
 	}
 

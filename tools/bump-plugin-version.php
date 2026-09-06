@@ -10,9 +10,9 @@ if ( $argc < 2 ) {
 	exit( 1 );
 }
 
-$version = ltrim( trim( (string) $argv[1] ), 'v' );
-if ( ! preg_match( '/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/', $version ) ) {
-	fwrite( STDERR, "Invalid version '{$version}'. Expected semantic version like 1.2.3.\n" );
+$version = preg_replace( '/^v/', '', trim( (string) $argv[1] ) );
+if ( ! preg_match( '/\A(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\z/', $version ) ) {
+	fwrite( STDERR, "Invalid version '{$version}'. Expected a stable version like 1.2.3.\n" );
 	exit( 1 );
 }
 
@@ -24,6 +24,38 @@ $current      = detect_current_version( $plugin_file );
 if ( version_compare( normalize_version_for_compare( $version ), normalize_version_for_compare( $current ), '<' ) ) {
 	fwrite( STDERR, "Refusing to downgrade version from {$current} to {$version}.\n" );
 	exit( 1 );
+}
+
+// Validate every source and release note before changing any version field.
+$dropin_file = $root . '/smart-hybrid-cache/dropins/object-cache.php';
+foreach ( array( $plugin_file, $readme_file, $dropin_file ) as $file ) {
+	if ( ! is_file( $file ) || ! is_readable( $file ) || ! is_writable( $file ) ) {
+		fwrite( STDERR, "Release source must be readable and writable: {$file}\n" );
+		exit( 1 );
+	}
+}
+$readme = file_get_contents( $readme_file );
+foreach ( array( 'Changelog', 'Upgrade Notice' ) as $section ) {
+	$pattern = '/^== ' . preg_quote( $section, '/' ) . ' ==\R(.*?)(?=^== |\z)/ms';
+	if ( ! preg_match( $pattern, $readme, $section_match )
+		|| ! preg_match( '/^= ' . preg_quote( $version, '/' ) . ' =\R(.*?)(?=^= |\z)/ms', $section_match[1], $entry )
+		|| '' === trim( $entry[1] ) || preg_match( '/pending|TODO|TBD/i', $entry[1] ) ) {
+		fwrite( STDERR, "Add completed {$section} notes for {$version} before changing the version.\n" );
+		exit( 1 );
+	}
+}
+$checks = array(
+	$plugin_file => array( '/^ \* Version:\s*\S+/m', "/define\\( 'SMART_HYBRID_CACHE_VERSION', '[^']+' \\);/" ),
+	$dropin_file => array( "/define\\( 'SMART_HYBRID_CACHE_DROPIN_VERSION', '[^']+' \\);/" ),
+	$readme_file => array( '/^Stable tag:\s*\S+/m' ),
+);
+foreach ( $checks as $file => $patterns ) {
+	foreach ( $patterns as $pattern ) {
+		if ( 1 !== preg_match_all( $pattern, file_get_contents( $file ) ) ) {
+			fwrite( STDERR, "Missing or duplicate version field in {$file}\n" );
+			exit( 1 );
+		}
+	}
 }
 
 replace_in_file(
@@ -92,43 +124,12 @@ function update_readme_metadata( string $file, string $version ): void {
 		exit( 1 );
 	}
 
-	$contents = ensure_section_entry( $updated, '== Changelog ==', $version, "* Release notes pending.\n" );
-	$contents = ensure_section_entry( $contents, '== Upgrade Notice ==', $version, "Release update.\n" );
+	$contents = $updated;
 
 	if ( false === file_put_contents( $file, $contents ) ) {
 		fwrite( STDERR, "Unable to write {$file}\n" );
 		exit( 1 );
 	}
-}
-
-/**
- * Ensure a version entry exists directly under a WordPress readme section.
- *
- * @param string $contents File contents.
- * @param string $section  Section heading.
- * @param string $version  Target version.
- * @param string $body     Body text for a new entry.
- * @return string
- */
-function ensure_section_entry( string $contents, string $section, string $version, string $body ): string {
-	$pattern = '/(' . preg_quote( $section, '/' ) . "\\R\\R)(.*?)(?=\\R== [^=]+ ==\\R|\\z)/s";
-	if ( ! preg_match( $pattern, $contents, $matches ) ) {
-		fwrite( STDERR, "Unable to find section {$section}\n" );
-		exit( 1 );
-	}
-
-	$section_header = $matches[1];
-	$section_body   = $matches[2];
-	$entry_pattern  = '/^= ' . preg_quote( $version, '/' ) . ' =$/m';
-
-	if ( preg_match( $entry_pattern, $section_body ) ) {
-		return $contents;
-	}
-
-	$new_entry        = '= ' . $version . " =\n" . rtrim( $body ) . "\n\n";
-	$replacement_body = $section_header . $new_entry . ltrim( $section_body, "\r\n" );
-
-	return preg_replace( $pattern, $replacement_body, $contents, 1 ) ?? $contents;
 }
 
 /**

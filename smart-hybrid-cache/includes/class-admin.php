@@ -56,8 +56,12 @@ class Smart_Hybrid_Cache_Admin {
 			return;
 		}
 		$screen = get_current_screen();
-		if ( ! $screen || 'settings_page-' . $this->page !== $screen->id ) {
+		if ( ! $screen || 'settings_page_' . $this->page !== $screen->id ) {
 			return; }
+		$error = Smart_Hybrid_Cache_Settings::get_shared_option( 'smart_hybrid_cache_dropin_error', '' );
+		if ( is_string( $error ) && '' !== $error ) {
+			printf( '<div class="notice notice-error"><p>%s</p></div>', esc_html( $error ) );
+		}
 		$options = Smart_Hybrid_Cache_Settings::get_options();
 		$engine  = $options['engine'];
 		if ( empty( $options['enable_dropin'] ) || 'disabled' === $engine ) {
@@ -83,7 +87,7 @@ class Smart_Hybrid_Cache_Admin {
 		}
 		check_admin_referer( 'smart_hybrid_cache_action' );
 		$action = isset( $_POST['shc_action'] ) && is_string( $_POST['shc_action'] ) ? sanitize_key( wp_unslash( $_POST['shc_action'] ) ) : '';
-		$force  = ! empty( $_POST['force_replace'] );
+		$force  = isset( $_POST['force_replace'] ) && '1' === $_POST['force_replace'];
 		$type   = 'updated';
 		$text   = __( 'Action completed.', 'smart-hybrid-cache' );
 
@@ -104,13 +108,12 @@ class Smart_Hybrid_Cache_Admin {
 				$type    = $flushed ? 'updated' : 'error';
 				break;
 			case 'install_dropin':
-				$result = Smart_Hybrid_Cache_Dropin_Installer::install( $force );
+				$result = Smart_Hybrid_Cache_Plugin::set_dropin_enabled( true, $force );
 				if ( is_wp_error( $result ) ) {
 					$type = 'error';
 					$text = $result->get_error_message();
 				} else {
 					$text = __( 'Object cache drop-in installed.', 'smart-hybrid-cache' );
-					Smart_Hybrid_Cache_Settings::update_options( array( 'enable_dropin' => true ) );
 					Smart_Hybrid_Cache_Logger::log( 'dropin_installed', $text );
 				}
 				break;
@@ -118,13 +121,12 @@ class Smart_Hybrid_Cache_Admin {
 				$text = __( 'Status refreshed.', 'smart-hybrid-cache' );
 				break;
 			case 'remove_dropin':
-				$result = Smart_Hybrid_Cache_Dropin_Installer::remove( $force );
+				$result = Smart_Hybrid_Cache_Plugin::set_dropin_enabled( false, $force );
 				if ( is_wp_error( $result ) ) {
 					$type = 'error';
 					$text = $result->get_error_message();
 				} else {
 					$text = __( 'Object cache drop-in removed.', 'smart-hybrid-cache' );
-					Smart_Hybrid_Cache_Settings::update_options( array( 'enable_dropin' => false ) );
 					Smart_Hybrid_Cache_Logger::log( 'dropin_removed', $text );
 				}
 				break;
@@ -143,6 +145,7 @@ class Smart_Hybrid_Cache_Admin {
 		$redirect = add_query_arg(
 			array(
 				'page'       => $this->page,
+				'shc_tab'    => 'show_status' === $action ? 'monitoring' : 'actions',
 				'shc_notice' => $text,
 				'shc_type'   => $type,
 			),
@@ -324,8 +327,8 @@ class Smart_Hybrid_Cache_Admin {
 
 	private function render_actions(): void {
 		$actions = array(
-			'test_redis'           => array( __( 'Test Redis connection', 'smart-hybrid-cache' ), __( 'Verify Redis settings without changing the active cache.', 'smart-hybrid-cache' ) ),
-			'test_memcached'       => array( __( 'Test Memcached connection', 'smart-hybrid-cache' ), __( 'Verify Memcached settings without changing the active cache.', 'smart-hybrid-cache' ) ),
+			'test_redis'           => array( __( 'Test Redis connection', 'smart-hybrid-cache' ), __( 'Verify saved Redis settings. Save changes before running this test.', 'smart-hybrid-cache' ) ),
+			'test_memcached'       => array( __( 'Test Memcached connection', 'smart-hybrid-cache' ), __( 'Verify saved Memcached settings. Save changes before running this test.', 'smart-hybrid-cache' ) ),
 			'flush'                => array( __( 'Flush this installation cache', 'smart-hybrid-cache' ), __( 'Invalidate this WordPress installation cache without clearing other applications.', 'smart-hybrid-cache' ) ),
 			'install_dropin'       => array( __( 'Install object cache drop-in', 'smart-hybrid-cache' ), __( 'Enable persistent object caching when no other drop-in owns object-cache.php.', 'smart-hybrid-cache' ) ),
 			'remove_dropin'        => array( __( 'Remove object cache drop-in', 'smart-hybrid-cache' ), __( 'Remove only the drop-in created by Smart Hybrid Cache unless replacement is confirmed.', 'smart-hybrid-cache' ) ),

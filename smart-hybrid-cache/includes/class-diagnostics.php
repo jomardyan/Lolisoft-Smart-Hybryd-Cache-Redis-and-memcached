@@ -24,7 +24,7 @@ class Smart_Hybrid_Cache_Diagnostics {
 
 		// Redact secret-like fields before exporting.
 		$options_safe = $options;
-		if ( ! empty( $options_safe['redis_password'] ) ) {
+		if ( isset( $options_safe['redis_password'] ) && '' !== (string) $options_safe['redis_password'] ) {
 			$options_safe['redis_password'] = '***redacted***';
 		}
 		unset( $options_safe['log_events'] );

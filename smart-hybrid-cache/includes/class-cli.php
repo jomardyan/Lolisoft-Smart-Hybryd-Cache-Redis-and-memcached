@@ -63,22 +63,51 @@ class Smart_Hybrid_Cache_CLI {
 			\WP_CLI::error( 'Usage: wp smart-cache enable redis|memcached' );
 		}
 		$options           = Smart_Hybrid_Cache_Settings::get_options();
+		$already_enabled   = $engine === $options['engine'] && ! empty( $options['enable_dropin'] );
 		$options['engine'] = $engine;
+		$options['enable_dropin'] = true;
 		Smart_Hybrid_Cache_Settings::update_options( $options );
-		$error = get_option( 'smart_hybrid_cache_dropin_error', '' );
+		if ( $already_enabled ) {
+			$result = Smart_Hybrid_Cache_Plugin::set_dropin_enabled( true );
+			if ( is_wp_error( $result ) ) {
+				\WP_CLI::error( $result->get_error_message() );
+			}
+		}
+		$error = Smart_Hybrid_Cache_Settings::get_shared_option( 'smart_hybrid_cache_dropin_error', '' );
 		if ( $error ) {
 			\WP_CLI::error( $error ); }
+		$saved = Smart_Hybrid_Cache_Settings::get_options();
+		if ( $saved['engine'] !== $engine || empty( $saved['enable_dropin'] ) ) {
+			\WP_CLI::error( 'Cache settings could not be saved. Check database access.' );
+		}
 		\WP_CLI::success( 'Enabled ' . $engine . '.' );
 	}
 
 	/** Disable persistent cache engine. */
 	public function disable(): void {
-		$options           = Smart_Hybrid_Cache_Settings::get_options();
-		$options['engine'] = 'disabled';
-		Smart_Hybrid_Cache_Settings::update_options( $options );
-		$error = get_option( 'smart_hybrid_cache_dropin_error', '' );
+		$options          = Smart_Hybrid_Cache_Settings::get_options();
+		$already_disabled = 'disabled' === $options['engine'];
+		Smart_Hybrid_Cache_Settings::update_options( array( 'engine' => 'disabled' ) );
+		$saved = Smart_Hybrid_Cache_Settings::get_options();
+		if ( 'disabled' !== $saved['engine'] ) {
+			\WP_CLI::error( 'Cache settings could not be saved. Check database access.' );
+		}
+		if ( $already_disabled ) {
+			// update_option does not fire its hook for unchanged values. Retry a
+			// previously failed file update before claiming the engine is disabled.
+			if ( Smart_Hybrid_Cache_Dropin_Installer::is_owned() || ! empty( $saved['enable_dropin'] ) ) {
+				$result = Smart_Hybrid_Cache_Plugin::set_dropin_enabled( ! empty( $saved['enable_dropin'] ) );
+				if ( is_wp_error( $result ) ) {
+					\WP_CLI::error( $result->get_error_message() );
+				}
+			} else {
+				Smart_Hybrid_Cache_Settings::delete_shared_option( 'smart_hybrid_cache_dropin_error' );
+			}
+		}
+		$error = Smart_Hybrid_Cache_Settings::get_shared_option( 'smart_hybrid_cache_dropin_error', '' );
 		if ( $error ) {
-			\WP_CLI::error( $error ); }
+			\WP_CLI::error( $error );
+		}
 		\WP_CLI::success( 'Smart Hybrid Cache disabled.' );
 	}
 
@@ -89,10 +118,9 @@ class Smart_Hybrid_Cache_CLI {
 	 * @synopsis [--force]
 	 */
 	public function install_dropin( array $args = array(), array $assoc_args = array() ): void {
-		$result = Smart_Hybrid_Cache_Dropin_Installer::install( ! empty( $assoc_args['force'] ) );
+		$result = Smart_Hybrid_Cache_Plugin::set_dropin_enabled( true, ! empty( $assoc_args['force'] ) );
 		if ( is_wp_error( $result ) ) {
 			\WP_CLI::error( $result->get_error_message() ); }
-		Smart_Hybrid_Cache_Settings::update_options( array( 'enable_dropin' => true ) );
 		\WP_CLI::success( 'Object cache drop-in installed.' );
 	}
 
@@ -103,10 +131,9 @@ class Smart_Hybrid_Cache_CLI {
 	 * @synopsis [--force]
 	 */
 	public function remove_dropin( array $args = array(), array $assoc_args = array() ): void {
-		$result = Smart_Hybrid_Cache_Dropin_Installer::remove( ! empty( $assoc_args['force'] ) );
+		$result = Smart_Hybrid_Cache_Plugin::set_dropin_enabled( false, ! empty( $assoc_args['force'] ) );
 		if ( is_wp_error( $result ) ) {
 			\WP_CLI::error( $result->get_error_message() ); }
-		Smart_Hybrid_Cache_Settings::update_options( array( 'enable_dropin' => false ) );
 		\WP_CLI::success( 'Object cache drop-in removed.' );
 	}
 

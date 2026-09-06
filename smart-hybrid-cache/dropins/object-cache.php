@@ -11,7 +11,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'SMART_HYBRID_CACHE_DROPIN_VERSION', '1.2.0' );
+define( 'SMART_HYBRID_CACHE_DROPIN_VERSION', '1.2.1' );
 
 class WP_Object_Cache {
 	private array $cache                 = array();
@@ -139,18 +139,25 @@ class WP_Object_Cache {
 		return is_array( $entry ) && ( 0 === $entry['expires'] || $entry['expires'] > time() );
 	}
 
-	private function backend_get( string $key ): mixed {
-		$value = $this->client->get( $key );
-		if ( 'memcached' === $this->engine && method_exists( $this->client, 'getResultCode' ) && ! in_array( $this->client->getResultCode(), array( Memcached::RES_SUCCESS, Memcached::RES_NOTFOUND ), true ) ) {
-			throw new RuntimeException( 'Memcached read failed.' );
-		}
+	private function backend_get( string $key, bool $extended = false ): mixed {
+		$value = $extended && 'memcached' === $this->engine ? $this->client->get( $key, null, Memcached::GET_EXTENDED ) : $this->client->get( $key );
+		$this->check_memcached_result( array( 'RES_SUCCESS', 'RES_NOTFOUND' ) );
 		return $value;
 	}
 
-	private function generation(): string {
-		if ( null !== $this->generation ) {
-			return $this->generation;
+	private function check_memcached_result( array $allowed ): void {
+		if ( 'memcached' !== $this->engine ) {
+			return;
 		}
+		$codes = array_map( static fn( $name ) => constant( 'Memcached::' . $name ), $allowed );
+		if ( ! in_array( $this->client->getResultCode(), $codes, true ) ) {
+			throw new RuntimeException( 'Memcached operation failed.' );
+		}
+	}
+
+	private function generation(): string {
+		// Refresh before backend operations. A different worker may have flushed
+		// the installation since this instance last used the persistent cache.
 		$key   = $this->namespace . 'generation';
 		$value = $this->backend_get( $key );
 		if ( ! is_string( $value ) || ! preg_match( '/^[a-f0-9]{32}$/D', $value ) ) {
@@ -161,6 +168,14 @@ class WP_Object_Cache {
 			}
 			if ( ! is_string( $value ) || ! preg_match( '/^[a-f0-9]{32}$/D', $value ) ) {
 				throw new RuntimeException( 'Cache namespace is unavailable.' );
+			}
+		}
+		if ( null !== $this->generation && $value !== $this->generation ) {
+			foreach ( array_keys( $this->cache ) as $scope ) {
+				$group = substr( $scope, strpos( $scope, ':' ) + 1 );
+				if ( $this->persistent( $group ) ) {
+					unset( $this->cache[ $scope ] );
+				}
 			}
 		}
 		$this->generation = $value;
@@ -225,9 +240,16 @@ class WP_Object_Cache {
 				return false;
 			}
 		} else {
+			// A value that cannot be serialized is a failed write, not a server
+			// outage. Do not report local success while stale remote data survives.
+			try {
+				$value = serialize( $entry );
+			} catch ( Throwable $e ) {
+				unset( $this->cache[ $scope ][ $key ] );
+				return false;
+			}
 			try {
 				$pkey  = $this->persistent_key( $key, $group );
-				$value = serialize( $entry );
 				if ( 'redis' === $this->engine ) {
 					$args = $ttl ? array( 'ex' => $ttl ) : array();
 					if ( 'set' !== $mode ) {
@@ -239,6 +261,7 @@ class WP_Object_Cache {
 				}
 				if ( ! $result ) {
 					unset( $this->cache[ $scope ][ $key ] );
+					$this->check_memcached_result( array( 'RES_SUCCESS', 'RES_NOTSTORED', 'RES_DATA_EXISTS', 'RES_NOTFOUND', 'RES_E2BIG' ) );
 					return false;
 				}
 			} catch ( Throwable $e ) {
@@ -269,9 +292,12 @@ class WP_Object_Cache {
 		if ( $this->persistent( $group ) ) {
 			try {
 				$pkey = $this->persistent_key( $key, $group );
-				return 'redis' === $this->engine ? (bool) $this->client->del( $pkey ) : $this->client->delete( $pkey );
+				$result = 'redis' === $this->engine ? (bool) $this->client->del( $pkey ) : $this->client->delete( $pkey );
+				$this->check_memcached_result( array( 'RES_SUCCESS', 'RES_NOTFOUND' ) );
+				return $result;
 			} catch ( Throwable $e ) {
 				$this->disconnect();
+				return false;
 			}
 		}
 		return $exists;
@@ -285,6 +311,7 @@ class WP_Object_Cache {
 		try {
 			$value = bin2hex( random_bytes( 16 ) );
 			if ( ! $this->client->set( $this->namespace . 'generation', $value ) ) {
+				$this->check_memcached_result( array( 'RES_SUCCESS' ) );
 				return false;
 			}
 			$this->generation = $value;
@@ -328,10 +355,12 @@ class WP_Object_Cache {
 			$pkey = $this->persistent_key( $key, $group );
 			for ( $attempt = 0; $attempt < 10; ++$attempt ) {
 				if ( 'redis' === $this->engine ) {
-					$this->client->watch( $pkey );
-					$entry = $this->decode( $this->client->get( $pkey ) );
+					if ( ! $this->client->watch( $pkey ) ) {
+						throw new RuntimeException( 'Redis could not watch the counter.' );
+					}
+					$entry = $this->decode( $this->backend_get( $pkey ) );
 				} else {
-					$result = $this->client->get( $pkey, null, Memcached::GET_EXTENDED );
+					$result = $this->backend_get( $pkey, true );
 					$entry  = $this->decode( is_array( $result ) ? $result['value'] : false );
 				}
 				if ( ! $this->live( $entry ) ) {
@@ -344,12 +373,14 @@ class WP_Object_Cache {
 				$entry['value'] = max( 0, ( is_numeric( $entry['value'] ) ? (int) $entry['value'] : 0 ) + $offset );
 				$ttl            = $this->expiration( $entry );
 				if ( 'redis' === $this->engine ) {
-					$this->client->multi();
-					$this->client->set( $pkey, serialize( $entry ), $ttl ? array( 'ex' => $ttl ) : array() );
+					if ( ! $this->client->multi() || ! $this->client->set( $pkey, serialize( $entry ), $ttl ? array( 'ex' => $ttl ) : array() ) ) {
+						throw new RuntimeException( 'Redis could not start the counter transaction.' );
+					}
 					$result = $this->client->exec();
 					$ok     = is_array( $result ) && ! empty( $result[0] );
 				} else {
 					$ok = $this->client->cas( $result['cas'], $pkey, serialize( $entry ), $ttl );
+					$this->check_memcached_result( array( 'RES_SUCCESS', 'RES_DATA_EXISTS', 'RES_NOTFOUND', 'RES_NOTSTORED' ) );
 				}
 				if ( $ok ) {
 					$this->cache[ $scope ][ $key ] = $entry;
@@ -359,10 +390,13 @@ class WP_Object_Cache {
 		} catch ( Throwable $e ) {
 			// A failed transaction must never leave a persistent socket in MULTI.
 			if ( 'redis' === $this->engine ) {
-				try {
-					$this->client->discard();
-					$this->client->unwatch(); } catch ( Throwable $ignored ) {
-					/* Connection already closed. */ }
+				foreach ( array( 'discard', 'unwatch' ) as $cleanup ) {
+					try {
+						$this->client->{$cleanup}();
+					} catch ( Throwable $ignored ) {
+						// DISCARD can fail outside MULTI; still attempt UNWATCH.
+					}
+				}
 			}
 			$this->disconnect();
 		}

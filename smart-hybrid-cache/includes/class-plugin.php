@@ -8,6 +8,7 @@ defined( 'ABSPATH' ) || exit;
 
 class Smart_Hybrid_Cache_Plugin {
 	private static ?Smart_Hybrid_Cache_Manager $manager = null;
+	private static bool $updating_dropin_state = false;
 
 	public static function init(): void {
 		self::$manager = new Smart_Hybrid_Cache_Manager();
@@ -18,6 +19,7 @@ class Smart_Hybrid_Cache_Plugin {
 		}
 		Smart_Hybrid_Cache_Site_Health::register();
 		add_action( 'update_option_' . SMART_HYBRID_CACHE_OPTION, array( __CLASS__, 'settings_updated' ), 10, 3 );
+		add_action( 'added_option', array( __CLASS__, 'settings_added' ), 10, 2 );
 		Smart_Hybrid_Cache_CLI::register();
 		do_action( 'smart_hybrid_cache_loaded', self::$manager );
 	}
@@ -27,9 +29,10 @@ class Smart_Hybrid_Cache_Plugin {
 	}
 
 	public static function settings_updated( mixed $old_value, mixed $value, string $option ): void {
-		if ( ! is_array( $old_value ) || ! is_array( $value ) ) {
+		if ( self::$updating_dropin_state || ! is_array( $value ) || ( is_multisite() && get_current_blog_id() !== get_main_site_id() ) ) {
 			return;
 		}
+		$old_value = is_array( $old_value ) ? $old_value : array();
 		$old = $old_value;
 		$new = $value;
 		foreach ( array( 'last_error', 'last_connected_engine', 'log_events', 'clear_redis_password' ) as $key ) {
@@ -50,14 +53,42 @@ class Smart_Hybrid_Cache_Plugin {
 		Smart_Hybrid_Cache_Logger::log( 'settings_updated', __( 'Settings updated.', 'smart-hybrid-cache' ) );
 	}
 
+	public static function settings_added( string $option, mixed $value ): void {
+		if ( SMART_HYBRID_CACHE_OPTION === $option ) {
+			self::settings_updated( array(), $value, $option );
+		}
+	}
+
+	/** Explicit actions synchronize the file once, then save their resulting state. */
+	public static function set_dropin_enabled( bool $enabled, bool $force = false ): WP_Error|bool {
+		$options = Smart_Hybrid_Cache_Settings::get_options();
+		$options['enable_dropin'] = $enabled;
+		$result = $enabled
+			? Smart_Hybrid_Cache_Dropin_Installer::install( $force, $options )
+			: Smart_Hybrid_Cache_Dropin_Installer::remove( $force );
+		if ( ! is_wp_error( $result ) ) {
+			self::$updating_dropin_state = true;
+			try {
+				Smart_Hybrid_Cache_Settings::update_options( array( 'enable_dropin' => $enabled ) );
+				if ( $enabled !== (bool) Smart_Hybrid_Cache_Settings::get_options()['enable_dropin'] ) {
+					$result = new WP_Error( 'settings_save_failed', __( 'The drop-in changed, but its setting could not be saved. Check database access and retry.', 'smart-hybrid-cache' ) );
+				}
+			} finally {
+				self::$updating_dropin_state = false;
+			}
+		}
+		self::report_result( $result );
+		return $result;
+	}
+
 	private static function report_result( mixed $result ): void {
 		if ( is_wp_error( $result ) ) {
 			if ( function_exists( 'add_settings_error' ) ) {
 				add_settings_error( 'smart_hybrid_cache', $result->get_error_code(), $result->get_error_message() );
 			}
-			update_option( 'smart_hybrid_cache_dropin_error', $result->get_error_message(), false );
+			Smart_Hybrid_Cache_Settings::update_shared_option( 'smart_hybrid_cache_dropin_error', $result->get_error_message() );
 		} else {
-			delete_option( 'smart_hybrid_cache_dropin_error' );
+			Smart_Hybrid_Cache_Settings::delete_shared_option( 'smart_hybrid_cache_dropin_error' );
 		}
 	}
 

@@ -51,7 +51,7 @@ class Smart_Hybrid_Cache_Memcached_Client {
 			}
 
 			$version = $memcached->getVersion();
-			if ( empty( $version ) || in_array( '255.255.255', $version, true ) ) {
+			if ( empty( $version ) || in_array( '255.255.255', $version, true ) || in_array( false, $version, true ) ) {
 				$this->last_error = __( 'Unable to connect to Memcached.', 'smart-hybrid-cache' );
 				return false;
 			}
