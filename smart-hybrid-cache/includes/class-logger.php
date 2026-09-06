@@ -37,9 +37,12 @@ class Smart_Hybrid_Cache_Logger {
 		);
 		$events   = array_slice( $events, - self::MAX_EVENTS );
 
-				self::$writing = true;
-		update_option( 'smart_hybrid_cache_events', $events, false );
-		self::$writing = false;
+		self::$writing = true;
+		try {
+			Smart_Hybrid_Cache_Settings::update_shared_option( 'smart_hybrid_cache_events', $events );
+		} finally {
+			self::$writing = false;
+		}
 	}
 
 	public static function is_writing(): bool {

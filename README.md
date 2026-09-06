@@ -2,7 +2,7 @@
 
 Persistent WordPress object caching with Redis or Memcached. Includes safe drop-in management, installation-scoped invalidation, diagnostics, and WP-CLI commands.
 
-Version 1.2.0. Requires WordPress 6.0 or newer and PHP 8.0 or newer. Licensed under GPL-3.0-or-later.
+Version 1.2.1. Requires WordPress 6.0 or newer and PHP 8.0 or newer. Licensed under GPL-3.0-or-later.
 
 ## Install
 
@@ -41,14 +41,14 @@ make validate
 make release
 ```
 
-`make test` runs runtime, Redis, and Memcached contract regressions. With native PHP extensions, it connects to local servers on ports 6379 and 11211. Without them, deterministic backend doubles cover API behavior and failure paths. CI explicitly requires real extensions and servers, then tests WordPress 6.0 and 7.1 in separate processes.
+`make test` runs administration, release preparation, runtime, Redis, and Memcached regressions. With native PHP extensions, it connects to local servers on ports 6379 and 11211. Without them, deterministic backend doubles cover API behavior and failure paths. CI explicitly requires real extensions and servers, then tests WordPress 6.0 and 7.1 in separate processes.
 
 `make build` recreates the ZIP from scratch. Validation checks metadata consistency, the runtime license, documented screenshots, the unconfigured drop-in template, and every ZIP entry against source. Tests, development dependencies, directory screenshots, and other build archives are excluded.
 
 Release outputs
 
 - `build/smart-hybrid-cache.zip`
-- `build/smart-hybrid-cache-1.2.0.zip`
+- `build/smart-hybrid-cache-1.2.1.zip`
 
 The GitHub Actions `smart-hybrid-cache` artifact downloads as an installable plugin archive. GitHub releases attach the standalone and versioned ZIPs. Release workflow values are passed through environment variables before use in shell commands.
 
@@ -74,12 +74,12 @@ wp smart-cache diagnostics --pretty
 Update the changelog and upgrade notice, then run
 
 ```sh
-make set-version VERSION=1.2.0
+make set-version VERSION=1.2.1
 make ci
 make release
 ```
 
-The version tool updates the main plugin header, runtime constant, drop-in version, and stable tag. Do not release placeholder changelog entries. Review all CI jobs before merging or tagging.
+The version tool requires completed changelog and upgrade notes for the target stable version before changing the main plugin header, runtime constant, drop-in version, and stable tag. Invalid input or missing metadata leaves version fields unchanged. Do not release placeholder changelog entries. Review all CI jobs before merging or tagging.
 
 The repository contains GitHub workflows for syntax checks, real-backend regression tests, WordPress integration, full Plugin Check including the drop-in, and packaging. Directory screenshots live in `.wordpress-org` and belong in the top-level SVN `assets` directory after approval.
 

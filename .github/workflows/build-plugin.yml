@@ -14,16 +14,29 @@ on:
         required: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
     name: Build WordPress plugin artifact
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+      memcached:
+        image: memcached:1.6-alpine
+        ports: ['11211:11211']
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: redis, memcached, zip
+          coverage: none
 
       - name: Verify PHP and install ZIP utility
         run: |
@@ -47,8 +60,8 @@ jobs:
           PACKAGE_VERSION: ${{ steps.package-version.outputs.version }}
         run: php tools/bump-plugin-version.php "$PACKAGE_VERSION"
 
-      - name: Build standalone plugin ZIP
-        run: make build
+      - name: Run regressions and build standalone plugin ZIP
+        run: make ci
 
       - name: Build versioned plugin ZIP
         if: steps.package-version.outputs.version != ''
@@ -66,14 +79,28 @@ jobs:
           path: smart-hybrid-cache/
           if-no-files-found: error
 
-      - name: Attach ZIPs to GitHub release
+      - name: Stage release ZIPs
         if: github.event_name == 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-zips
+          path: build/*.zip
+          if-no-files-found: error
+
+  publish-release:
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-zips
+          path: build/
+      - name: Attach ZIPs to GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-          PACKAGE_VERSION: ${{ steps.package-version.outputs.version }}
-        run: |
-          gh release upload "$RELEASE_TAG" \
-            build/smart-hybrid-cache.zip \
-            "build/smart-hybrid-cache-${PACKAGE_VERSION}.zip" \
-            --clobber
+        run: gh release upload "$RELEASE_TAG" build/*.zip --clobber

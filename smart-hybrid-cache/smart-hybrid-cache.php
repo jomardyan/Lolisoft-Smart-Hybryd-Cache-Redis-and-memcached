@@ -3,7 +3,7 @@
  * Plugin Name: Smart Hybrid Cache
  * Plugin URI:  https://github.com/jomardyan/Lolisoft-Smart-Hybryd-Cache-Redis-and-memcached
  * Description: Persistent WordPress object caching with Redis or Memcached, safe fallbacks, admin controls, and WP-CLI support.
- * Version:     1.2.0
+ * Version:     1.2.1
  * Requires at least: 6.0
  * Requires PHP: 8.0
  * Author:      Smart Hybrid Cache Contributors
@@ -18,7 +18,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'SMART_HYBRID_CACHE_VERSION', '1.2.0' );
+define( 'SMART_HYBRID_CACHE_VERSION', '1.2.1' );
 define( 'SMART_HYBRID_CACHE_PATH', plugin_dir_path( __FILE__ ) );
 define( 'SMART_HYBRID_CACHE_URL', plugin_dir_url( __FILE__ ) );
 define( 'SMART_HYBRID_CACHE_BASENAME', plugin_basename( __FILE__ ) );

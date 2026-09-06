@@ -118,6 +118,23 @@ if ( 'disabled' !== $engine ) {
 	same( 'must survive', $raw->get( $unrelated ), 'Flush protects unrelated application' );
 	$fresh = new WP_Object_Cache();
 	same( false, $fresh->get( 'cross-request' ), 'Flush invalidates persistent keys' );
+	$other->set( 'local-survivor', 'runtime', 'local-only' );
+	same( false, $other->get( 'cross-request', '', true ), 'Existing instance forced read observes remote flush' );
+	same( 'runtime', $other->get( 'local-survivor', 'local-only' ), 'Remote generation refresh preserves nonpersistent groups' );
+	same( true, $other->set( 'after-remote-flush', 'current' ), 'Existing instance writes after remote flush' );
+	same( 'current', $fresh->get( 'after-remote-flush', '', true ), 'Post-flush write reaches active namespace' );
+	$other->set( 'remote-counter', 1 );
+	$fresh->flush();
+	$fresh->set( 'remote-counter', 10 );
+	same( 11, $other->incr( 'remote-counter' ), 'Existing counter operation uses remotely rotated namespace' );
+	$fresh->flush();
+	$fresh->set( 'remote-delete', 'current' );
+	same( true, $other->delete( 'remote-delete' ), 'Existing delete operation uses remotely rotated namespace' );
+	same( false, $fresh->get( 'remote-delete', '', true ), 'Delete removes entry from active namespace' );
+	wp_cache_set( 'cannot-serialize', 'original' );
+	same( false, wp_cache_set( 'cannot-serialize', static function () {} ), 'Unserializable persistent write reports failure' );
+	same( $engine, $GLOBALS['wp_object_cache']->shc_engine(), 'Serialization error does not disconnect healthy backend' );
+	same( 'original', wp_cache_get( 'cannot-serialize', '', true ), 'Failed serialization does not claim to replace persisted data' );
 	if ( ! defined( 'SHC_FAKE_BACKENDS' ) && function_exists( 'pcntl_fork' ) ) {
 		wp_cache_set( 'parallel-counter', 0 );
 		$children = array();
@@ -146,6 +163,45 @@ if ( 'disabled' !== $engine ) {
 		same( 60, $reader->get( 'parallel-counter' ), 'Atomic counter retains all concurrent updates' );
 	}
 	if ( defined( 'SHC_FAKE_BACKENDS' ) ) {
+		if ( 'redis' === $engine ) {
+			foreach ( array( 'watch', 'multi' ) as $operation ) {
+				$failing = new WP_Object_Cache();
+				$failing->set( 'guarded-counter', 7 );
+				SHC_Fake_Store::$calls = array();
+				SHC_Fake_Store::$fail_operations = array( $operation, 'discard' );
+				same( false, $failing->incr( 'guarded-counter' ), 'Rejected Redis transaction setup fails increment' );
+				same( 'none', $failing->shc_engine(), 'Rejected Redis transaction opens circuit' );
+				same( 1, SHC_Fake_Store::$calls['unwatch'], 'Redis clears WATCH even when DISCARD fails' );
+				SHC_Fake_Store::$fail_operations = array();
+				same( 7, wp_cache_get( 'guarded-counter', '', true ), 'Rejected Redis transaction does not change counter' );
+			}
+		} else {
+			foreach ( array( 'get_extended', 'cas', 'delete', 'set' ) as $operation ) {
+				$failing = new WP_Object_Cache();
+				$failing->set( 'outage-entry', 7 );
+				SHC_Fake_Store::$calls = array();
+				SHC_Fake_Store::$fail_operations = array( $operation );
+				if ( 'set' === $operation ) {
+					same( true, $failing->set( 'outage-entry', 9 ), 'Memcached connection failure falls back to runtime write' );
+				} elseif ( 'delete' === $operation ) {
+					same( false, $failing->delete( 'outage-entry' ), 'Failed persistent delete does not report success' );
+				} else {
+					same( false, $failing->incr( 'outage-entry' ), 'Memcached counter network failure reported' );
+				}
+				same( 'none', $failing->shc_engine(), 'Memcached nonthrowing network error opens circuit' );
+				same( 1, SHC_Fake_Store::$calls[ $operation ], 'Network failure is not retried repeatedly' );
+				SHC_Fake_Store::$fail_operations = array();
+			}
+			SHC_Fake_Store::$fail_operations = array( 'version' );
+			same( 'none', ( new WP_Object_Cache() )->shc_engine(), 'False Memcached server version is unavailable' );
+			function __( $message, $domain = '' ) { return $message; }
+			function apply_filters( $hook, $value, ...$args ) { return $value; }
+			require dirname( __DIR__ ) . '/smart-hybrid-cache/includes/class-memcached-client.php';
+			$admin_client = new Smart_Hybrid_Cache_Memcached_Client();
+			same( false, $admin_client->connect( $options ), 'Admin Memcached client rejects false server version' );
+			same( true, '' !== $admin_client->get_last_error(), 'Admin Memcached connection failure explains error' );
+			SHC_Fake_Store::$fail_operations = array();
+		}
 		SHC_Fake_Store::$reject_write = true;
 		same( false, wp_cache_set( 'rejected', 'value' ), 'Backend write rejection reported' );
 		SHC_Fake_Store::$reject_write = false;

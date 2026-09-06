@@ -4,7 +4,7 @@ Tags: cache, object cache, redis, memcached, performance
 Requires at least: 6.0
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 1.2.0
+Stable tag: 1.2.1
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -99,6 +99,13 @@ The source repository stores screenshots in .wordpress-org. They are deployed to
 
 == Changelog ==
 
+= 1.2.1 =
+* Fixed forced reads and writes after another request flushes the cache.
+* Contained Memcached transport errors, Redis transaction setup failures, and serialization failures.
+* Corrected multisite shared settings, CLI enable and drop-in lifecycle synchronization.
+* Restored settings notices and redacted credentials in diagnostic error text.
+* Added administration and release regressions and required prepared release notes before changing versions.
+
 = 1.2.0 =
 * Fixed early WordPress bootstrap by generating standalone drop-in configuration.
 * Isolated cache flushing by installation and stopped whole-server Memcached flushes.
@@ -115,6 +122,9 @@ The source repository stores screenshots in .wordpress-org. They are deployed to
 * Initial release with Redis and Memcached persistent object cache support.
 
 == Upgrade Notice ==
+
+= 1.2.1 =
+Update the owned drop-in from plugin settings after upgrading. Forced reads and writes now refresh the cache namespace across requests. Cache server connection settings remain in place.
 
 = 1.2.0 =
 Update the owned drop-in from the plugin settings. The cache namespace changes and warms again automatically. Back up an existing third-party drop-in before replacing it.

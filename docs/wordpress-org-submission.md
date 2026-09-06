@@ -21,7 +21,7 @@ The proposed slug and text domain are `smart-hybrid-cache`. The contributor is c
 
 Sign in to the publisher's WordPress.org account, open the plugin submission page, and upload `build/smart-hybrid-cache.zip`. Confirm the requested declarations personally. This work prepares the repository and ZIP. It does not submit a plugin, accept account declarations, reserve a slug, or guarantee approval.
 
-After approval, WordPress provides an SVN repository. Copy runtime files into `trunk`, copy screenshots into top-level `assets`, and copy the same runtime files into `tags/1.2.0`. Keep the stable tag aligned with that version. Inspect the SVN diff and commit a complete release. Do not upload this GitHub repository wholesale.
+After approval, WordPress provides an SVN repository. Copy runtime files into `trunk`, copy screenshots into top-level `assets`, and copy the same runtime files into `tags/1.2.1`. Keep the stable tag aligned with that version. Inspect the SVN diff and commit a complete release. Do not upload this GitHub repository wholesale.
 
 If the approved slug differs, align the directory name, main filename where appropriate, text domain, build scripts, readme, documentation, and workflows before release. Brand banners and icons are optional and may be added later with confirmed license rights.
 

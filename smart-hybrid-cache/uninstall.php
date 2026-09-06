@@ -30,8 +30,11 @@ if ( $smart_hybrid_cache_remove && ! is_link( $smart_hybrid_cache_target ) && fi
 		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Reading local file header only.
 		$smart_hybrid_cache_header = file_get_contents( $smart_hybrid_cache_target, false, null, 0, 2048 );
 	}
-	if ( false !== strpos( (string) $smart_hybrid_cache_header, 'Smart Hybrid Cache Drop-In' ) ) {
+	if ( false !== strpos( (string) $smart_hybrid_cache_header, 'Signature: Smart Hybrid Cache Drop-In' ) ) {
 		wp_delete_file( $smart_hybrid_cache_target );
+		if ( function_exists( 'opcache_invalidate' ) ) {
+			opcache_invalidate( $smart_hybrid_cache_target, true );
+		}
 	}
 }
 
@@ -57,7 +60,7 @@ if ( is_multisite() ) {
 	} while ( 100 === count( $smart_hybrid_cache_site_ids ) );
 } else {
 	delete_option( $smart_hybrid_cache_option_name );
-		delete_option( 'smart_hybrid_cache_events' );
-		delete_option( 'smart_hybrid_cache_status' );
-		delete_option( 'smart_hybrid_cache_dropin_error' );
+	delete_option( 'smart_hybrid_cache_events' );
+	delete_option( 'smart_hybrid_cache_status' );
+	delete_option( 'smart_hybrid_cache_dropin_error' );
 }

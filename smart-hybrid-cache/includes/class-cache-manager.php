@@ -75,13 +75,12 @@ class Smart_Hybrid_Cache_Manager {
 			$ok = false;
 		}
 		$message = $ok ? __( 'Connection and cache read/write/delete test successful.', 'smart-hybrid-cache' ) : ( $client->get_last_error() ?: __( 'Cache test failed. Check server access, credentials, and permissions.', 'smart-hybrid-cache' ) );
-		update_option(
+		Smart_Hybrid_Cache_Settings::update_shared_option(
 			'smart_hybrid_cache_status',
 			array(
 				'last_connected_engine' => $ok ? $engine : '',
 				'last_error'            => $ok ? '' : $message,
-			),
-			false
+			)
 		);
 		Smart_Hybrid_Cache_Logger::log( $ok ? 'connection_test_success' : 'connection_test_failure', $message, array( 'engine' => $engine ) );
 		return array(

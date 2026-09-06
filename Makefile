@@ -25,7 +25,7 @@ help:
 	@echo "  make build-versioned      Build versioned ZIP at $(VERSIONED_ZIP)"
 	@echo "  make set-version VERSION=x.y.z  Update plugin metadata version"
 	@echo "  make release              Build both standard and versioned ZIPs"
-	@echo "  make ci                   Run lint + build (CI pipeline target)"
+	@echo "  make ci                   Run lint, regressions, validation and build"
 	@echo "  make clean                Remove build artifacts"
 	@echo "  make tree                 Print plugin file tree"
 	@echo ""
@@ -53,6 +53,8 @@ set-version:
 	@echo "Version updated to $(VERSION)"
 
 test:
+	@php tests/release-regressions.php
+	@php tests/admin-regressions.php
 	@php tests/run.php
 	@SHC_TEST_ENGINE=redis php tests/run.php
 	@SHC_TEST_ENGINE=memcached php tests/run.php

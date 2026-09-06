@@ -22,7 +22,9 @@ if ( preg_match( '/pending|TODO|TBD/i', $readme ) ) { $errors[] = 'Readme contai
 if ( 1 !== substr_count( $dropin, '/* SHC_CONFIGURATION */ array()' ) ) { $errors[] = 'Release source must contain an unconfigured drop-in template.'; }
 if ( ! is_file( $plugin . '/LICENSE' ) || hash_file( 'sha256', $root . '/LICENSE' ) !== hash_file( 'sha256', $plugin . '/LICENSE' ) ) { $errors[] = 'Runtime license must match the repository license.'; }
 foreach ( array( 1, 2 ) as $n ) { if ( ! is_file( $root . '/.wordpress-org/screenshot-' . $n . '.png' ) ) { $errors[] = 'Missing documented screenshot ' . $n; } }
-if ( ! empty( $argv[1] ) ) {
+if ( ! empty( $argv[1] ) && ! class_exists( 'ZipArchive' ) ) {
+ $errors[] = 'The PHP ZIP extension is required to validate an archive.';
+} elseif ( ! empty( $argv[1] ) ) {
  $zip = new ZipArchive();
  if ( true !== $zip->open( $argv[1] ) ) { $errors[] = 'Cannot open release ZIP.'; } else {
   for ( $i = 0; $i < $zip->numFiles; ++$i ) {
