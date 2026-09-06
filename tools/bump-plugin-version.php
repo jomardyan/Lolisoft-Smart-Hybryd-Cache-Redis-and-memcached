@@ -34,6 +34,10 @@ replace_in_file(
 	)
 );
 
+replace_in_file(
+ $root . '/smart-hybrid-cache/dropins/object-cache.php',
+ array( "/define\\( 'SMART_HYBRID_CACHE_DROPIN_VERSION', '[^']+' \\);/" => "define( 'SMART_HYBRID_CACHE_DROPIN_VERSION', '" . $version . "' );" )
+);
 update_readme_metadata( $readme_file, $version );
 
 echo "Bumped Smart Hybrid Cache metadata from {$current} to {$version}\n";

@@ -16,7 +16,7 @@ defined( 'ABSPATH' ) || exit;
  * @since 1.0.0
  */
 class Smart_Hybrid_Cache_Logger {
-	private const MAX_EVENTS = 50;
+	private const MAX_EVENTS     = 50;
 	private static bool $writing = false;
 
 	public static function log( string $event, string $message, array $context = array() ): void {
@@ -37,9 +37,8 @@ class Smart_Hybrid_Cache_Logger {
 		);
 		$events   = array_slice( $events, - self::MAX_EVENTS );
 
-		$options['log_events'] = $events;
-		self::$writing         = true;
-		update_option( SMART_HYBRID_CACHE_OPTION, $options, false );
+				self::$writing = true;
+		update_option( 'smart_hybrid_cache_events', $events, false );
 		self::$writing = false;
 	}
 

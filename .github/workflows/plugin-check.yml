@@ -26,4 +26,3 @@ jobs:
         with:
           build-dir: './smart-hybrid-cache'
           wp-version: 'latest'
-          exclude-directories: 'dropins'

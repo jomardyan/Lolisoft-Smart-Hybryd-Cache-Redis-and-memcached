@@ -1,0 +1,90 @@
+name: Cache regression tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  cache-contract:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.0', '8.3', '8.5']
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+      memcached:
+        image: memcached:1.6-alpine
+        ports: ['11211:11211']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: redis, memcached, zip
+          coverage: none
+      - name: Verify native extensions
+        run: php -r 'exit(extension_loaded("redis") && extension_loaded("memcached") ? 0 : 1);'
+      - run: make ci
+  wordpress-integration:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        wordpress: ['6.0', '7.1']
+        engine: ['redis', 'memcached']
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: test-password
+          MYSQL_DATABASE: wordpress_test
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping --password=test-password"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+      memcached:
+        image: memcached:1.6-alpine
+        ports: ['11211:11211']
+    env:
+      SHC_WP_ENGINE: ${{ matrix.engine }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'
+          extensions: redis, memcached, mysqli, zip
+          tools: wp-cli
+          coverage: none
+      - name: Install disposable WordPress
+        env:
+          WP_VERSION: ${{ matrix.wordpress }}
+        run: |
+          wp core download --version="$WP_VERSION" --path=/tmp/shc-wordpress
+          wp config create --path=/tmp/shc-wordpress --dbname=wordpress_test --dbuser=root --dbpass=test-password --dbhost=127.0.0.1
+          wp config set FS_METHOD direct --path=/tmp/shc-wordpress
+          wp core install --path=/tmp/shc-wordpress --url=http://localhost --title=CacheTests --admin_user=cache-tests --admin_password=local-test-password --admin_email=tests@example.test --skip-email
+          cp -R smart-hybrid-cache /tmp/shc-wordpress/wp-content/plugins/
+          wp plugin activate smart-hybrid-cache --path=/tmp/shc-wordpress
+      - name: Verify separate WordPress requests and cleanup
+        run: |
+          wp eval-file tests/wordpress-smoke.php configure --path=/tmp/shc-wordpress
+          wp eval-file tests/wordpress-smoke.php boot --path=/tmp/shc-wordpress
+          wp eval-file tests/wordpress-smoke.php next-request --path=/tmp/shc-wordpress
+          wp eval-file tests/wordpress-smoke.php cleanup --path=/tmp/shc-wordpress
+      - name: Verify multisite isolation and administration
+        if: matrix.wordpress == '7.1'
+        run: |
+          wp plugin deactivate smart-hybrid-cache --path=/tmp/shc-wordpress
+          wp core multisite-convert --path=/tmp/shc-wordpress --title=CacheNetwork --base=/
+          wp plugin activate smart-hybrid-cache --network --path=/tmp/shc-wordpress
+          wp site create --slug=secondary --title=Secondary --email=tests@example.test --path=/tmp/shc-wordpress
+          wp eval-file tests/wordpress-smoke.php multisite --path=/tmp/shc-wordpress

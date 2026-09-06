@@ -312,3 +312,68 @@ padding: 10px 14px;
 margin: 12px 0 16px;
 max-width: 800px;
 }
+
+/* Keep settings and diagnostics usable on narrow WordPress admin screens. */
+.smart-hybrid-cache,
+.smart-hybrid-cache .shc-tab-panel,
+.smart-hybrid-cache .shc-action-copy {
+min-width: 0;
+overflow-wrap: anywhere;
+}
+.smart-hybrid-cache input,
+.smart-hybrid-cache select,
+.smart-hybrid-cache .button {
+box-sizing: border-box;
+max-width: 100%;
+}
+.smart-hybrid-cache .shc-stats-sections {
+grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+}
+.smart-hybrid-cache .shc-tabs {
+display: flex;
+flex-wrap: wrap;
+gap: 4px;
+}
+.smart-hybrid-cache .shc-tabs .nav-tab {
+margin: 0;
+}
+.smart-hybrid-cache .shc-tabs [role="tab"]:focus-visible {
+outline: 2px solid #2271b1;
+outline-offset: 2px;
+}
+.no-js .smart-hybrid-cache .shc-tab-panel[hidden] {
+display: block;
+}
+.no-js .smart-hybrid-cache .shc-tabs {
+display: none;
+}
+@media (max-width: 782px) {
+.smart-hybrid-cache .shc-hero,
+.smart-hybrid-cache .shc-actions form {
+align-items: flex-start;
+flex-direction: column;
+}
+.smart-hybrid-cache .shc-tab-panel {
+padding: 14px;
+}
+.smart-hybrid-cache .shc-status,
+.smart-hybrid-cache .shc-log {
+table-layout: fixed;
+}
+.smart-hybrid-cache .shc-status th {
+width: 42%;
+}
+.smart-hybrid-cache .shc-actions .button {
+height: auto;
+white-space: normal;
+}
+}
+@media (prefers-reduced-motion: reduce) {
+.smart-hybrid-cache .shc-progress-bar {
+transition: none;
+}
+}
+
+.smart-hybrid-cache .shc-hero .notice p {
+color: #1d2327;
+}

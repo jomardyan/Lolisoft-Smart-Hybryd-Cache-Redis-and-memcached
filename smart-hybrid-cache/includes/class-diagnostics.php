@@ -36,10 +36,10 @@ class Smart_Hybrid_Cache_Diagnostics {
 				'dropin_version' => self::dropin_version(),
 			),
 			'environment'  => array(
-				'wp_version'      => isset( $wp_version ) ? (string) $wp_version : 'unknown',
-				'php_version'     => PHP_VERSION,
-				'multisite'       => is_multisite(),
-				'redis_extension' => phpversion( 'redis' ) ?: null,
+				'wp_version'          => isset( $wp_version ) ? (string) $wp_version : 'unknown',
+				'php_version'         => PHP_VERSION,
+				'multisite'           => is_multisite(),
+				'redis_extension'     => phpversion( 'redis' ) ?: null,
 				'memcached_extension' => phpversion( 'memcached' ) ?: null,
 			),
 			'status'       => array(

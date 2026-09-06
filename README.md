@@ -1,215 +1,94 @@
 # Smart Hybrid Cache
 
-[![Build Plugin ZIP](https://github.com/jomardyan/Lolisoft-Smart-Hybryd-Cache-Redis-and-memcached/actions/workflows/build-plugin.yml/badge.svg)](https://github.com/jomardyan/Lolisoft-Smart-Hybryd-Cache-Redis-and-memcached/actions/workflows/build-plugin.yml)
-[![Lint](https://github.com/jomardyan/Lolisoft-Smart-Hybryd-Cache-Redis-and-memcached/actions/workflows/lint.yml/badge.svg)](https://github.com/jomardyan/Lolisoft-Smart-Hybryd-Cache-Redis-and-memcached/actions/workflows/lint.yml)
-[![Plugin Check](https://github.com/jomardyan/Lolisoft-Smart-Hybryd-Cache-Redis-and-memcached/actions/workflows/plugin-check.yml/badge.svg)](https://github.com/jomardyan/Lolisoft-Smart-Hybryd-Cache-Redis-and-memcached/actions/workflows/plugin-check.yml)
-[![PHP 8.0+](https://img.shields.io/badge/PHP-8.0%2B-777BB4?logo=php&logoColor=white)](https://www.php.net/)
-[![WordPress 6.0+](https://img.shields.io/badge/WordPress-6.0%2B-21759B?logo=wordpress&logoColor=white)](https://wordpress.org/)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+Persistent WordPress object caching with Redis or Memcached. Includes safe drop-in management, installation-scoped invalidation, diagnostics, and WP-CLI commands.
 
-Persistent WordPress object caching with **Redis** or **Memcached**, safe fallbacks, admin controls, diagnostics, and WP-CLI support.
+Version 1.2.0. Requires WordPress 6.0 or newer and PHP 8.0 or newer. Licensed under GPL-3.0-or-later.
 
-## Overview
+## Install
 
-Smart Hybrid Cache is a WordPress plugin that adds persistent object caching using Redis or Memcached through their PHP extensions. It is designed to work safely in real-world environments by falling back gracefully when services or extensions are unavailable.
+1. Install a Redis or Memcached server and its PHP extension through your host.
+2. Run `make build` and upload `build/smart-hybrid-cache.zip` through the WordPress plugin installer.
+3. Activate the plugin and open Settings > Smart Hybrid Cache.
+4. Save the server settings and run a connection test.
+5. Enable or install the object cache drop-in. Reload the page to verify the active engine.
 
-This repository contains the plugin source, build workflow, and packaging setup for generating an installable WordPress plugin ZIP.
+Network activate on multisite. Only a super administrator on the main site can change the shared configuration. The local `wp-content` directory must be writable by PHP for atomic drop-in installation.
 
-## Features
+The [directory readme](smart-hybrid-cache/readme.txt) contains installation, privacy, storage, compatibility, and recovery details. The [submission guide](docs/wordpress-org-submission.md) explains the remaining WordPress.org account and review steps.
 
-- Redis, Memcached, Auto, and Disabled engine modes
-- Safe fallback to the default WordPress object cache behavior
-- WordPress admin settings for configuring and testing cache connections
-- Persistent object cache drop-in installation support
-- WP-CLI commands for common cache operations
-- Site Health integration and diagnostics export
-- Monitoring, logging, and cache status visibility
-- Multisite-aware cache key prefixing
-- Configurable global and non-persistent cache groups
+## Cache behavior
 
-## Requirements
+- The installed drop-in embeds configuration and starts before the WordPress Options API is available. No settings queries run during cache initialization.
+- Auto resolves a single backend when settings are saved or the drop-in is installed. Outages fall back to request-local memory. The plugin does not alternate data stores during an outage.
+- Keys include installation identity, configuration generation, blog or global scope, and a hash of the original key. Long keys and groups remain distinct and valid for Memcached.
+- Flushes rotate an installation-specific random namespace. They never clear the whole Redis database or Memcached server. Old values expire or are evicted normally.
+- Bulk operations return a result for each key. Falsy values remain cache hits. Cached objects are cloned. Counters use Redis transactions or Memcached CAS and retain expiry.
+- WordPress core invalidates normal objects. Optional full post-update flushing is disabled by default and runs once at shutdown when enabled.
+- Connection diagnostics run on demand. Frontend plugin loading does not open another connection or write connection status to the options table.
 
-- WordPress 6.0 or later
-- PHP 8.0 or later
-- Redis server with the `ext-redis` PHP extension, or
-- Memcached server with the `ext-memcached` PHP extension
+Configure only trusted cache servers. Cached WordPress objects require PHP object deserialization. Connection credentials live in the database and the generated PHP drop-in, with owner-only file permissions requested at installation. Diagnostics redact the Redis password.
 
-## Important Notes
+Current limits include single-server connections, Redis password authentication without ACL usernames, no Redis Cluster or Sentinel, and no Memcached SASL or TLS. If data changed during an outage, flush after the backend recovers. A zero default TTL requires an appropriate eviction policy to reclaim invalidated namespaces.
 
-- This plugin does **not** install Redis or Memcached for you.
-- Your cache server must already be installed and running.
-- Persistent object caching in WordPress requires an `object-cache.php` drop-in.
-- This plugin focuses on **object caching**, not full page caching.
+## Build and verify
 
-## Repository Structure
-
-```text
-.
-├── .github/
-│   └── workflows/
-├── build/
-├── smart-hybrid-cache/
-│   ├── assets/
-│   ├── dropins/
-│   ├── includes/
-│   ├── readme.txt
-│   ├── smart-hybrid-cache.php
-│   └── uninstall.php
-├── tools/
-├── Makefile
-├── README.md
-└── LICENSE
-```
-
-## Installation
-
-### Install from GitHub Actions artifact
-
-Open the workflow run on GitHub and download the `smart-hybrid-cache` artifact.
-
-GitHub delivers it as `smart-hybrid-cache.zip`. Upload that file as-is in WordPress under **Plugins > Add New > Upload Plugin**.
-
-**Do not extract it first**, and do **not** upload a ZIP nested inside another ZIP.
-
-The artifact ZIP contains the plugin files directly at its root, so WordPress installs it correctly as the `smart-hybrid-cache` plugin.
-
-### Install from a local build
-
-Build the plugin locally:
+Requires PHP CLI with ZipArchive, Make, and the `zip` command.
 
 ```sh
-make build
-```
-
-Then upload:
-
-```text
-build/smart-hybrid-cache.zip
-```
-
-in WordPress under **Plugins > Add New > Upload Plugin**.
-
-### Manual installation
-
-1. Copy the `smart-hybrid-cache` directory into `/wp-content/plugins/`
-2. Activate the plugin in WordPress
-3. Go to **Settings > Smart Hybrid Cache**
-4. Choose **Auto**, **Redis**, or **Memcached**
-5. Save settings and test the connection
-6. Install the object cache drop-in to enable persistent object caching
-
-## Development
-
-### Available Make targets
-
-```sh
-make help
-make version
 make lint
-make build
-make build-versioned
-make set-version VERSION=1.2.0
-make release
-make ci
-make clean
-make tree
-```
-
-### What they do
-
-- `make help` — shows all available build and release commands
-- `make version` — prints the detected plugin version from plugin metadata
-- `make lint` — runs PHP linting on all plugin PHP files
-- `make build` — creates `build/smart-hybrid-cache.zip`
-- `make build-versioned` — creates `build/smart-hybrid-cache-<version>.zip`
-- `make set-version VERSION=1.2.0` — updates plugin metadata before packaging a release
-- `make release` — creates both standard and versioned ZIP artifacts
-- `make ci` — runs lint followed by build (used by CI pipeline)
-- `make clean` — removes the build directory
-- `make tree` — prints the plugin file tree
-
-## Release Process
-
-### Local release preparation
-
-```sh
-make set-version VERSION=1.2.0
+make test
+make validate
 make release
 ```
 
-This updates plugin metadata and creates both release artifacts:
+`make test` runs runtime, Redis, and Memcached contract regressions. With native PHP extensions, it connects to local servers on ports 6379 and 11211. Without them, deterministic backend doubles cover API behavior and failure paths. CI explicitly requires real extensions and servers, then tests WordPress 6.0 and 7.1 in separate processes.
+
+`make build` recreates the ZIP from scratch. Validation checks metadata consistency, the runtime license, documented screenshots, the unconfigured drop-in template, and every ZIP entry against source. Tests, development dependencies, directory screenshots, and other build archives are excluded.
+
+Release outputs
 
 - `build/smart-hybrid-cache.zip`
 - `build/smart-hybrid-cache-1.2.0.zip`
 
-### GitHub release automation
+The GitHub Actions `smart-hybrid-cache` artifact downloads as an installable plugin archive. GitHub releases attach the standalone and versioned ZIPs. Release workflow values are passed through environment variables before use in shell commands.
 
-The intended release flow is:
+## WP-CLI
 
-1. Create a Git tag such as `v1.2.0`
-2. Publish a GitHub release for that tag
-3. The GitHub Actions workflow resolves the release version from the tag
-4. The workflow bumps plugin metadata automatically
-5. The workflow builds standard and versioned ZIP artifacts
-6. The workflow uploads artifacts and attaches ZIPs to the GitHub release
+```sh
+wp smart-cache status
+wp smart-cache test auto
+wp smart-cache test redis
+wp smart-cache test memcached
+wp smart-cache enable redis
+wp smart-cache disable
+wp smart-cache install-dropin
+wp smart-cache remove-dropin
+wp smart-cache flush
+wp smart-cache diagnostics --pretty
+```
 
-## GitHub Actions
+`install-dropin --force` and `remove-dropin --force` explicitly authorize replacing or removing a foreign regular drop-in file. Symbolic links require manual handling. Flush failure returns a nonzero CLI exit status.
 
-This repository includes two GitHub Actions workflows:
+## Release maintenance
 
-### Lint (`lint.yml`)
+Update the changelog and upgrade notice, then run
 
-Runs on push to `main` and on pull requests. Tests PHP syntax compatibility across PHP 8.0, 8.1, 8.2, and 8.3.
+```sh
+make set-version VERSION=1.2.0
+make ci
+make release
+```
 
-### Build Plugin ZIP (`build-plugin.yml`)
+The version tool updates the main plugin header, runtime constant, drop-in version, and stable tag. Do not release placeholder changelog entries. Review all CI jobs before merging or tagging.
 
-Runs on push to `main`, pull requests, release events, and manual dispatch. This workflow:
+The repository contains GitHub workflows for syntax checks, real-backend regression tests, WordPress integration, full Plugin Check including the drop-in, and packaging. Directory screenshots live in `.wordpress-org` and belong in the top-level SVN `assets` directory after approval.
 
-- checks out the repository
-- sets up PHP 8.2
-- optionally bumps plugin version metadata for release packaging
-- builds standalone and versioned release ZIPs
-- uploads the installable plugin artifact
-- attaches both release ZIPs to GitHub releases
+## Recovery
 
-## WP-CLI Support
+Add `define( 'SMART_HYBRID_CACHE_DISABLED', true );` to `wp-config.php` before WordPress loads for an immediate runtime bypass. If an older broken drop-in prevents startup, rename the owned `wp-content/object-cache.php` through your hosting file manager, then install the current drop-in from the settings page.
 
-The plugin includes WP-CLI support for cache management and diagnostics.
+Deactivation removes the owned drop-in by default. If removal is disabled, it writes a disabled configuration instead. Uninstall deletes settings and logs in batches across multisite and respects the owned-drop-in cleanup preference. A filesystem error requires manual correction through your host.
 
-Examples of supported operations include:
+## Contributions and security
 
-- status
-- test
-- flush
-- enable
-- disable
-- install-dropin
-- remove-dropin
-- diagnostics
-
-## Safety and Compatibility
-
-Smart Hybrid Cache is designed to be conservative and safe:
-
-- falls back when Redis or Memcached is unavailable
-- avoids overwriting another plugin’s `object-cache.php` unless explicitly confirmed
-- integrates with WordPress Site Health
-- supports multisite-aware cache behavior
-
-## License
-
-Licensed under **GPL-3.0-or-later**.
-
-See [LICENSE](LICENSE).
-
-## Contributing
-
-Contributions, fixes, and improvements are welcome. If you plan to make significant changes, consider opening an issue or pull request first to discuss the proposed update.
-
-## Plugin Metadata
-
-- **Plugin Name:** Smart Hybrid Cache
-- **Version:** 1.1.0
-- **Requires WordPress:** 6.0+
-- **Requires PHP:** 8.0+
-- **License:** GPL-3.0-or-later
+Use [GitHub issues](https://github.com/jomardyan/Lolisoft-Smart-Hybryd-Cache-Redis-and-memcached/issues) for reproducible non-sensitive problems. See [SECURITY.md](SECURITY.md) for vulnerability reporting and [CONTRIBUTING.md](CONTRIBUTING.md) for development guidance.
