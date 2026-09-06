@@ -29,7 +29,8 @@ jobs:
           extensions: redis, memcached, zip
           coverage: none
       - name: Verify native extensions
-        run: php -r 'exit(extension_loaded("redis") && extension_loaded("memcached") ? 0 : 1);'
+        run: |
+          php -r 'exit(extension_loaded("redis") && extension_loaded("memcached") ? 0 : 1);'
       - run: make ci
   wordpress-integration:
     runs-on: ubuntu-latest
